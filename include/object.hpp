@@ -1,5 +1,7 @@
 #pragma once
 
+#include "types.hpp"
+
 class Object {
     public:
     ObjectType type_;
@@ -7,13 +9,3 @@ class Object {
     virtual void takeDamage(int damage) = 0;
 };
 
-struct InspectInfo {
-    int health;
-    ObjectType type;  
-};
-
-enum ObjectType {
-    Entity,
-    Resource,
-    Unknown
-};

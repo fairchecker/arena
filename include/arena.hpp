@@ -1,8 +1,8 @@
+#pragma once
+
 #include "world.hpp"
 #include "agent_gateway.hpp"
-#include <vector>
-
-#pragma once
+#include "entity_registry.hpp"
 
 
 class Arena {
@@ -10,18 +10,5 @@ class Arena {
 
     private:
     AgentGateway gateway_;
-    World world_;
-
-};
-
-struct Position {
-    int row;
-    int column;
-};
-
-enum Rotation {
-    Up,
-    Right,
-    Down,
-    Left
+    EntityRegistry registry_;
 };

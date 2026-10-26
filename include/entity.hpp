@@ -18,16 +18,24 @@ class ArenaEntity : public Object {
     }
 
     void takeDamage(int damage) {
-        health_ -= damage;
-        if(health_ <= 0) {
-
-        }
+        health_ -= damage; // use it freely; registry kills all the agents with <0 hp every tick
     }
 
-    int Move(Position relativePosition);
-    int Rotate(Rotation newRotation);
-    void Attack();
-    void Eat();
+    Position getPosition() {
+        return position_;
+    }
+
+    void setPosition(Position newPosition) {
+        position_ = newPosition; // must be checked valified before this method
+    }
+
+    Rotation getDirection() {
+        return direction_;
+    }
+
+    void setDirection(Rotation newDirection) {
+        direction_ = newDirection;
+    }
 
     private:
     int id_;
@@ -40,14 +48,6 @@ class ArenaEntity : public Object {
     Rotation direction_;
     Position position_;
 
-    std::vector<Object> entityObjects_;
-    std::vector<Object> resouceObjects_;
-
     int inspectDistance_;
-
-    void die() {
-        health_ = 0;
-
-    }
 };
 
