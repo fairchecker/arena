@@ -6,8 +6,12 @@
 
 class Arena {
     public:
+    void makeTurn() {
+        for()
+    }
 
     private:
     AgentGateway gateway_;
     World world_;
+
 };

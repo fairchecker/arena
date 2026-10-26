@@ -1,6 +1,5 @@
 #include <vector>
 #include "tile.hpp"
-#include "entity.hpp"
 
 #pragma once
 
