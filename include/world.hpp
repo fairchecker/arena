@@ -1,7 +1,7 @@
-#include <vector>
-#include "tile.hpp"
-
 #pragma once
+
+#include "tile.hpp"
+#include "arena.hpp"
 
 class World {
     public:
@@ -23,5 +23,4 @@ class World {
     int width_;
     int height_;
     std::vector<Tile> tiles_;
-    std::vector<Entity> entities_;
 };

@@ -10,10 +10,10 @@ class Object {
 struct InspectInfo {
     int health;
     ObjectType type;  
-}
+};
 
 enum ObjectType {
     Entity,
     Resource,
     Unknown
-}
+};

@@ -1,6 +1,9 @@
 #pragma once
 
-class Entity : public Object {
+#include "arena.hpp"
+#include "object.hpp"
+
+class ArenaEntity : public Object {
     public:
     int getHealth(){
         return health_;
@@ -11,30 +14,28 @@ class Entity : public Object {
     }
 
     InspectInfo inspect(){
-        return InspectInfo{health_, ObjectType};
+        return InspectInfo{health_, type_};
     }
 
-    int takeDamage(int damage) {
+    void takeDamage(int damage) {
         health_ -= damage;
-        if(health <= 0) {
+        if(health_ <= 0) {
 
         }
-    }
-
-    void watch() {
-        
     }
 
     int Move(Position relativePosition);
     int Rotate(Rotation newRotation);
     void Attack();
+    void Eat();
 
     private:
     int id_;
     int health_;
     int damage_;
+    int energy_;
 
-    ObjectType type_;
+    ObjectType type_ = ObjectType::Entity;
 
     Rotation direction_;
     Position position_;
@@ -50,14 +51,3 @@ class Entity : public Object {
     }
 };
 
-struct Position {
-    int row;
-    int column;
-};
-
-enum Rotation {
-    Up,
-    Right,
-    Down,
-    Left
-}
