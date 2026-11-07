@@ -29,9 +29,18 @@ target_compile_features(arena_core PUBLIC cxx_std_17)
 
 arena_apply_compile_options(arena_core)
 
+# Keep executable locations predictable across single-config generators (Ninja,
+# MinGW Makefiles) and multi-config generators (Visual Studio, Ninja Multi-Config).
+# Explicit $<CONFIG> prevents multi-config generators from adding another
+# configuration directory automatically.
+set(ARENA_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
+
 if(ARENA_BUILD_DEMO)
     add_executable(arena_demo src/main.cpp)
     target_link_libraries(arena_demo PRIVATE arena_core)
+    set_target_properties(arena_demo PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${ARENA_RUNTIME_OUTPUT_DIRECTORY}"
+    )
     arena_apply_compile_options(arena_demo)
 endif()
 
@@ -39,6 +48,9 @@ if(ARENA_BUILD_TESTS)
     enable_testing()
     add_executable(arena_tests tests/arena_tests.cpp)
     target_link_libraries(arena_tests PRIVATE arena_core)
+    set_target_properties(arena_tests PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${ARENA_RUNTIME_OUTPUT_DIRECTORY}"
+    )
     arena_apply_compile_options(arena_tests)
     add_test(NAME arena_tests COMMAND arena_tests)
 endif()

@@ -12,24 +12,58 @@ process: there is no HTTP server, gateway, socket protocol, or remote-agent abst
 
 ## Build and run
 
+### Windows (PowerShell, Visual Studio or Ninja)
+
+Run these commands from the repository root. The presets select `Release` explicitly
+for both the build and CTest, including multi-configuration generators such as Visual
+Studio. The demo and test executables are placed in the same predictable directory.
+
+```powershell
+cmake --preset release
+cmake --build --preset release --parallel
+ctest --preset release
+.\build-release\bin\Release\arena_demo.exe
+```
+
+If CMake reports that the build directory was previously configured with a different
+generator, remove the old build directory and configure again:
+
+```powershell
+Remove-Item -Recurse -Force build-release -ErrorAction SilentlyContinue
+cmake --preset release
+cmake --build --preset release --parallel
+ctest --preset release
+.\build-release\bin\Release\arena_demo.exe
+```
+
+### Linux / macOS
+
+```bash
+cmake --preset release
+cmake --build --preset release --parallel
+ctest --preset release
+./build-release/bin/Release/arena_demo
+```
+
+The same preset commands work with single-configuration generators. CMake places the
+runtime executable under `bin/Release` in either case. CMake 3.21 or newer is required
+for presets; alternatively, configure manually with CMake 3.16+:
+
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
-./build/arena_demo
 ```
 
 To run with AddressSanitizer and UndefinedBehaviorSanitizer (GCC/Clang):
 
 ```bash
-cmake -S . -B build-sanitize \
-  -DCMAKE_BUILD_TYPE=Debug \
-  -DARENA_ENABLE_SANITIZERS=ON
-cmake --build build-sanitize --parallel
-ctest --test-dir build-sanitize --output-on-failure
+cmake --preset sanitize
+cmake --build --preset sanitize --parallel
+ctest --preset sanitize
 ```
 
-CMake presets (CMake 3.21+) are also provided: `release` and `sanitize`.
+The sanitizer preset is intended for GCC/Clang toolchains. It is not enabled for MSVC.
 
 ## Architecture and simulation contract
 

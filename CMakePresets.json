@@ -32,17 +32,20 @@
   "buildPresets": [
     {
       "name": "release",
-      "configurePreset": "release"
+      "configurePreset": "release",
+      "configuration": "Release"
     },
     {
       "name": "sanitize",
-      "configurePreset": "sanitize"
+      "configurePreset": "sanitize",
+      "configuration": "Debug"
     }
   ],
   "testPresets": [
     {
       "name": "release",
       "configurePreset": "release",
+      "configuration": "Release",
       "output": {
         "outputOnFailure": true
       }
@@ -50,6 +53,7 @@
     {
       "name": "sanitize",
       "configurePreset": "sanitize",
+      "configuration": "Debug",
       "output": {
         "outputOnFailure": true
       }
