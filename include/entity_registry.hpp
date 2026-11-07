@@ -1,42 +1,38 @@
 #pragma once
 
-#include <unordered_map>
 #include "entity.hpp"
 #include "world.hpp"
-#include "types.hpp"
+
+#include <cstddef>
+#include <memory>
+#include <optional>
+#include <unordered_map>
+#include <vector>
 
 class EntityRegistry {
-    public:
-    ArenaEntity getEntity(int entityId) {
-        return registry_[entityId];
-    }
+public:
+    explicit EntityRegistry(World& world) : world_(world) {}
 
-    int addEntity(ArenaEntity entity) {
-        registry_[currentNumber_++] = entity;
-        return currentNumber_ - 1;
-    }
+    EntityId addEntity(ArenaEntity entity);
+    ArenaEntity* getEntity(EntityId entityId) noexcept;
+    const ArenaEntity* getEntity(EntityId entityId) const noexcept;
 
-    void eat(int id);
-    int attack(int id);
-    int move(int id);
-    int rotate(int id, Rotation newRotation);
+    bool move(EntityId id);
+    bool rotate(EntityId id, Rotation newRotation);
+    bool eat(EntityId id);
+    bool attack(EntityId id);
+    bool kill(EntityId id);
 
-    int kill(int id);
+    std::optional<InspectInfo> inspect(EntityId observerId, EntityId targetId) const;
+    std::vector<EntityView> watch(EntityId observerId) const;
 
-    void watch(int id);
-    InspectInfo inspect(int id, int targetId);
+    void checkHealth();
+    std::vector<EntityId> aliveIds() const;
+    std::size_t size() const noexcept { return entities_.size(); }
+    std::size_t aliveCount() const noexcept;
 
-    void checkHealth() {
-        for(int i = 0; i < currentNumber_; i++){
-            if(registry_[i].getHealth() <= 0) { 
-                kill(i);
-                i--;
-            }
-        } 
-    }
-
-    private:
-    int currentNumber_ = 0;
-    std::unordered_map<int, ArenaEntity> registry_;
-    World world_;
+private:
+    EntityId nextId_{0};
+    World& world_;
+    std::unordered_map<EntityId, std::unique_ptr<ArenaEntity>> entities_;
 };

@@ -1,37 +1,37 @@
 #pragma once
 
 #include "tile.hpp"
-#include "types.hpp"
+
+#include <cstddef>
 #include <vector>
 
 class World {
-    public:
-    World(int width, int height) {
-        width_ = width;
-        height_ = height;
-        tiles_ = std::vector<Tile>(width * height);
-    }
+public:
+    World(int width, int height);
 
-    Tile getTile(Position position) {
-        return tiles_[position.row * width_ + position.column];
-    }
+    int getWidth() const noexcept { return width_; }
+    int getHeight() const noexcept { return height_; }
 
-    void setTile(Tile tile, Position position) {
-        tiles_[position.row * width_ + position.column] = tile;
-    }
+    bool inBounds(Position position) const noexcept;
+    bool verifyPosition(Position position) const noexcept { return inBounds(position); }
+    bool isWalkable(Position position) const noexcept;
+    bool isOccupied(Position position) const noexcept;
+    std::optional<EntityId> entityAt(Position position) const;
 
-    bool verifyPosition(Position position){
-        if(position.column > width_ || position.row > height_ || position.column < 0 || position.row < 0) return false;
-        return true; 
-    }
+    const Tile& getTile(Position position) const;
+    Tile& getTile(Position position);
+    void setTile(const Tile& tile, Position position);
+    bool setWalkable(Position position, bool walkable);
+    bool addFood(Position position, int amount);
+    bool consumeFood(Position position, int amount = 1);
 
-    int updateTileObject(Position first, Position second) {
-        if(!getTile(first).objectId.has_value()) return -1;
-        getTile(second).objectId = getTile(first).objectId;
-        getTile(first).objectId.reset(); 
-    }
+    bool placeEntity(EntityId id, Position position);
+    bool moveEntity(EntityId id, Position from, Position to);
+    bool removeEntity(EntityId id, Position position);
 
-    private:
+private:
+    std::size_t indexOf(Position position) const;
+
     int width_;
     int height_;
     std::vector<Tile> tiles_;

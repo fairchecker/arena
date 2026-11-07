@@ -1,0 +1,44 @@
+cmake_minimum_required(VERSION 3.16)
+project(arena LANGUAGES CXX)
+
+option(ARENA_BUILD_TESTS "Build arena unit tests" ON)
+option(ARENA_BUILD_DEMO "Build the arena demo executable" ON)
+option(ARENA_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+
+function(arena_apply_compile_options target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
+        if(ARENA_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(${target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+            target_link_options(${target} PRIVATE -fsanitize=address,undefined)
+        endif()
+    endif()
+endfunction()
+
+add_library(arena_core
+    src/agent.cpp
+    src/arena.cpp
+    src/entity.cpp
+    src/entity_registry.cpp
+    src/world.cpp
+)
+target_include_directories(arena_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(arena_core PUBLIC cxx_std_17)
+
+arena_apply_compile_options(arena_core)
+
+if(ARENA_BUILD_DEMO)
+    add_executable(arena_demo src/main.cpp)
+    target_link_libraries(arena_demo PRIVATE arena_core)
+    arena_apply_compile_options(arena_demo)
+endif()
+
+if(ARENA_BUILD_TESTS)
+    enable_testing()
+    add_executable(arena_tests tests/arena_tests.cpp)
+    target_link_libraries(arena_tests PRIVATE arena_core)
+    arena_apply_compile_options(arena_tests)
+    add_test(NAME arena_tests COMMAND arena_tests)
+endif()

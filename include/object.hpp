@@ -3,9 +3,9 @@
 #include "types.hpp"
 
 class Object {
-    public:
-    ObjectType type_;
-    virtual InspectInfo inspect() = 0;
-    virtual void takeDamage(int damage) = 0;
+public:
+    virtual ~Object() = default;
+    virtual ObjectType objectType() const noexcept = 0;
+    virtual InspectInfo inspect() const noexcept = 0;
+    virtual void takeDamage(int damage) noexcept = 0;
 };
-

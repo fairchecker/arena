@@ -1,11 +1,17 @@
 #pragma once
 
+#include "types.hpp"
+
 #include <optional>
 
-class Tile {
-    public:
-    int id;
-    std::optional<int> objectId;
-    private:
-    
+struct Tile {
+    bool walkable{true};
+    int food{0};
+    std::optional<EntityId> entityId;
+};
+
+struct TileView {
+    Position position{};
+    bool walkable{true};
+    int food{0};
 };
