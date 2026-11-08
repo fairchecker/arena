@@ -86,6 +86,12 @@ if(ARENA_BUILD_TESTS)
     target_link_libraries(learning_benchmark PRIVATE arena_core)
     arena_apply_compile_options(learning_benchmark)
     add_test(NAME arena_learning_benchmark COMMAND learning_benchmark)
+    # Task 2 benchmark (out-of-sight fixed food, learning curve). Full runs are done by hand;
+    # CTest only runs its self-test (BFS optimum, greedy baseline, determinism).
+    add_executable(memory_curve tests/memory_curve.cpp)
+    target_link_libraries(memory_curve PRIVATE arena_core)
+    arena_apply_compile_options(memory_curve)
+    add_test(NAME arena_memory_curve_self_test COMMAND memory_curve --self-test)
     if(ARENA_BUILD_GUI)
         find_package(Python3 COMPONENTS Interpreter QUIET)
         if(Python3_Interpreter_FOUND)

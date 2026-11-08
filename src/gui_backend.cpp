@@ -4,6 +4,7 @@
 #include "learned_brain.hpp"
 
 #include <array>
+#include <cstdint>
 #include <iostream>
 #include <iomanip>
 #include <fstream>
@@ -11,8 +12,11 @@
 #include <memory>
 #include <optional>
 #include <random>
+#include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 void printJsonString(const std::string& text) {
@@ -41,7 +45,50 @@ void spawnFood(Arena& arena, std::mt19937& random) {
     }
 }
 
-std::unique_ptr<Arena> createArena(std::mt19937& random, bool reproduce, int sourcesPerRoom, bool randomFood, const std::string& brainType, const std::string& skillsPath) {
+struct Layout {
+    std::array<Position, 3> starts;
+    std::vector<Position> sources;
+};
+
+constexpr std::array<Position, 6> kCrates{{{2, 5}, {6, 17}, {3, 29}, {12, 5}, {19, 18}, {20, 27}}};
+
+// Default layout: fixed starts and fixed source offsets (unchanged historical behaviour).
+// With a layout seed, source cells and start cells are drawn at random from the interior
+// of each room, so different seeds are genuinely different worlds. Rooms are 8 rows by 12
+// columns; relative rows 1..6 and columns 1..10 are always interior cells.
+Layout makeLayout(const std::optional<std::uint32_t>& layoutSeed, int sourcesPerRoom) {
+    Layout layout;
+    if (!layoutSeed) {
+        layout.starts = {{{3, 3}, {11, 17}, {20, 31}}};
+        const std::array<Position, 4> offsets{{{5, 9}, {2, 8}, {6, 3}, {1, 6}}};
+        for (int roomRow = 0; roomRow < 3; ++roomRow)
+            for (int roomColumn = 0; roomColumn < 3; ++roomColumn)
+                for (int source = 0; source < sourcesPerRoom; ++source)
+                    layout.sources.push_back(Position{roomRow * 8, roomColumn * 12} + offsets[static_cast<std::size_t>(source)]);
+        return layout;
+    }
+    std::mt19937 random(*layoutSeed);
+    std::set<std::pair<int, int>> used;
+    for (const Position crate : kCrates) used.insert({crate.row, crate.column});
+    const auto draw = [&](int roomRow, int roomColumn) {
+        for (;;) {
+            const Position position{roomRow * 8 + 1 + static_cast<int>(random() % 6U),
+                                    roomColumn * 12 + 1 + static_cast<int>(random() % 10U)};
+            if (used.insert({position.row, position.column}).second) return position;
+        }
+    };
+    for (int roomRow = 0; roomRow < 3; ++roomRow)
+        for (int roomColumn = 0; roomColumn < 3; ++roomColumn)
+            for (int source = 0; source < sourcesPerRoom; ++source)
+                layout.sources.push_back(draw(roomRow, roomColumn));
+    for (Position& start : layout.starts)
+        start = draw(static_cast<int>(random() % 3U), static_cast<int>(random() % 3U));
+    return layout;
+}
+
+std::unique_ptr<Arena> createArena(std::mt19937& random, bool reproduce, int sourcesPerRoom, bool randomFood,
+                                   const std::string& brainType, const std::string& skillsPath,
+                                   const std::optional<std::uint32_t>& layoutSeed) {
     auto arena = std::make_unique<Arena>(36, 24);
     // Enable autonomous asexual reproduction for the HDC population: agents may be
     // born up to the arena's population cap (default 8) and pay its cost (default 5).
@@ -53,37 +100,39 @@ std::unique_ptr<Arena> createArena(std::mt19937& random, bool reproduce, int sou
     for (int col = 0; col < 36; ++col) {
         if (col % 12 != 6) { arena->setWall({8, col}); arena->setWall({16, col}); }
     }
-    const std::array<Position, 3> starts{{{3, 3}, {11, 17}, {20, 31}}};
-    for (const Position start : starts) {
+    const Layout layout = makeLayout(layoutSeed, sourcesPerRoom);
+    std::uint32_t agentIndex = 0;
+    for (const Position start : layout.starts) {
+        // Without a layout seed every brain keeps the historical seed 1; with one, each
+        // agent gets its own seed so that the layout seed also varies the brains.
+        const std::uint32_t brainSeed = layoutSeed ? *layoutSeed * 1000003U + agentIndex + 1U : 1U;
+        ++agentIndex;
         // HdcBrain(seed, reproduceCost): a positive reproduceCost enables autonomous
         // reproduction under safe conditions; the arena still enforces its own cost
         // and cap at resolution time.
         std::unique_ptr<AgentBrain> brain;
         if (brainType == "graph") brain = std::make_unique<GraphBrain>();
+        else if (brainType == "random") brain = std::make_unique<RandomBrain>(brainSeed);
+        else if (brainType == "greedy") brain = std::make_unique<GreedyFoodBrain>(brainSeed);
         else if (brainType == "learned") {
-            auto learned = std::make_unique<LearnedBrain>(1);
+            auto learned = std::make_unique<LearnedBrain>(brainSeed);
             if (!skillsPath.empty()) {
                 std::ifstream file(skillsPath);
                 if (!file || !learned->loadSkills(file)) throw std::runtime_error("Cannot load skill file: " + skillsPath);
             }
             brain = std::move(learned);
         }
-        else brain = std::make_unique<HdcBrain>(1, reproduce ? 5 : 0);
+        else brain = std::make_unique<HdcBrain>(brainSeed, reproduce ? 5 : 0);
         if (arena->addAgent(ArenaEntity(start, std::move(brain), Rotation::Right)) < 0)
             throw std::runtime_error("Could not place GUI agent");
     }
-    const std::array<Position, 6> crates{{{2, 5}, {6, 17}, {3, 29}, {12, 5}, {19, 18}, {20, 27}}};
-    for (const Position position : crates) {
+    for (const Position position : kCrates) {
         if (!arena->addCrate(position)) throw std::runtime_error("Could not place crate");
     }
-    const std::array<Position, 4> offsets{{{5, 9}, {2, 8}, {6, 3}, {1, 6}}};
-    for (int roomRow = 0; roomRow < 3; ++roomRow)
-        for (int roomColumn = 0; roomColumn < 3; ++roomColumn)
-            for (int source = 0; source < sourcesPerRoom; ++source) {
-                const Position position = Position{roomRow * 8, roomColumn * 12} + offsets[static_cast<std::size_t>(source)];
-                if (!arena->addFoodSource(position) || !arena->addFood(position))
-                    throw std::runtime_error("Could not place food source");
-            }
+    for (const Position position : layout.sources) {
+        if (!arena->addFoodSource(position) || !arena->addFood(position))
+            throw std::runtime_error("Could not place food source");
+    }
     if (randomFood) for (int i = 0; i < 8; ++i) spawnFood(*arena, random);
     return arena;
 }
@@ -140,6 +189,14 @@ void printState(const Arena& arena, const TickReport* report) {
         const auto* brain = agent ? dynamic_cast<const HdcBrain*>(agent->getBrain()) : nullptr;
         const auto* graphBrain = agent ? dynamic_cast<const GraphBrain*>(agent->getBrain()) : nullptr;
         const auto* learnedBrain = agent ? dynamic_cast<const LearnedBrain*>(agent->getBrain()) : nullptr;
+        const bool randomBrain = agent && dynamic_cast<const RandomBrain*>(agent->getBrain());
+        const bool greedyBrain = agent && dynamic_cast<const GreedyFoodBrain*>(agent->getBrain());
+        if (randomBrain || greedyBrain) {
+            if (!first) std::cout << ',';
+            first = false;
+            std::cout << "{\"id\":" << id << ",\"type\":\"" << (randomBrain ? "random" : "greedy") << "\",\"visits\":[]}";
+            continue;
+        }
         if (learnedBrain) {
             if (!first) std::cout << ',';
             first = false;
@@ -223,6 +280,7 @@ void printSnapshot(const Arena& arena) {
 
 int main(int argc, char** argv) {
     std::optional<std::mt19937::result_type> fixedSeed;
+    std::optional<std::uint32_t> layoutSeed;
     bool reproduce = true, randomFood = true;
     std::string brainType = "hdc";
     std::string skillsPath;
@@ -235,11 +293,12 @@ int main(int argc, char** argv) {
             if (option == "--skills" && i + 1 < argc) { skillsPath = argv[++i]; continue; }
             if (option == "--brain" && i + 1 < argc) {
                 const std::string type = argv[++i];
-                if (type != "graph" && type != "hdc" && type != "learned") throw std::invalid_argument("brain");
+                if (type != "graph" && type != "hdc" && type != "learned" && type != "random" && type != "greedy")
+                    throw std::invalid_argument("brain");
                 brainType = type;
                 continue;
             }
-            if ((option != "--seed" && option != "--sources-per-room") || i + 1 >= argc)
+            if ((option != "--seed" && option != "--sources-per-room" && option != "--layout-seed") || i + 1 >= argc)
                 throw std::invalid_argument("option");
             const std::string value = argv[++i];
             std::size_t end = 0;
@@ -247,6 +306,7 @@ int main(int argc, char** argv) {
             if (value.empty() || value[0] == '-' || end != value.size() ||
                 number > std::numeric_limits<std::uint32_t>::max()) throw std::out_of_range("value");
             if (option == "--seed") fixedSeed = static_cast<std::mt19937::result_type>(number);
+            else if (option == "--layout-seed") layoutSeed = static_cast<std::uint32_t>(number);
             else {
                 if (number < 1 || number > 4) throw std::out_of_range("sources");
                 sourcesPerRoom = static_cast<int>(number);
@@ -254,13 +314,13 @@ int main(int argc, char** argv) {
         }
         if (!skillsPath.empty() && brainType != "learned") throw std::invalid_argument("skills require learned brain");
     } catch (const std::exception&) {
-        std::cerr << "Usage: arena_gui_backend [--brain hdc|graph|learned] [--skills FILE] [--seed 0..4294967295] [--sources-per-room 1..4] [--no-random-food] [--no-reproduction]\n";
+        std::cerr << "Usage: arena_gui_backend [--brain hdc|graph|learned|random|greedy] [--skills FILE] [--seed 0..4294967295] [--layout-seed 0..4294967295] [--sources-per-room 1..4] [--no-random-food] [--no-reproduction]\n";
         return 1;
     }
     std::random_device entropy;
     std::mt19937 random(fixedSeed ? *fixedSeed : entropy());
     std::unique_ptr<Arena> arena;
-    try { arena = createArena(random, reproduce, sourcesPerRoom, randomFood, brainType, skillsPath); }
+    try { arena = createArena(random, reproduce, sourcesPerRoom, randomFood, brainType, skillsPath, layoutSeed); }
     catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
     std::string command;
     while (std::getline(std::cin, command)) {
@@ -270,7 +330,7 @@ int main(int argc, char** argv) {
             printState(*arena, &report);
         } else if (command == "reset") {
             random.seed(fixedSeed ? *fixedSeed : entropy());
-            try { arena = createArena(random, reproduce, sourcesPerRoom, randomFood, brainType, skillsPath); }
+            try { arena = createArena(random, reproduce, sourcesPerRoom, randomFood, brainType, skillsPath, layoutSeed); }
             catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
             printState(*arena, nullptr);
         } else if (command == "snapshot") {

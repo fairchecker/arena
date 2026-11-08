@@ -65,3 +65,26 @@ with tempfile.TemporaryDirectory() as temporary:
     assert len(initial['models']) == 3
     assert all(m['brain']['states'] for m in initial['models'])
     assert len(json.loads((output / 'metadata.json').read_text())['skillsSha256']) == 64
+
+    # --layout-seed: same seed -> same world, different seed -> different world, and the
+    # default (no flag) layout stays the historical fixed one. Baseline brains run.
+    def world(*extra):
+        process = subprocess.run([binary, '--no-random-food', '--no-reproduction', *extra],
+                                 input='state\n', capture_output=True, text=True, check=True)
+        state = json.loads(process.stdout.splitlines()[0])
+        sources = [i for i, tile in enumerate(state['tiles']) if tile['source']]
+        starts = [(a['row'], a['column']) for a in state['agents']]
+        return sources, starts
+    assert world('--layout-seed', '1') == world('--layout-seed', '1')
+    assert world('--layout-seed', '1') != world('--layout-seed', '2')
+    assert world('--brain', 'hdc') == world('--brain', 'greedy')  # default layout is brain-independent
+    assert world('--layout-seed', '1')[0] != world()[0]
+    assert len(world('--layout-seed', '3')[0]) == 9
+    assert len(set(world('--layout-seed', '3')[1])) == 3
+    for brain in ('random', 'greedy'):
+        process = subprocess.run([binary, '--brain', brain, '--layout-seed', '5', '--no-random-food',
+                                  '--no-reproduction'], input='state\n' + 'step\n' * 40,
+                                 capture_output=True, text=True, check=True)
+        states = [json.loads(line) for line in process.stdout.splitlines()]
+        assert states[-1]['tick'] == 40
+        assert all(m['type'] == brain for m in states[-1]['models'])

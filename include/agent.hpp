@@ -105,3 +105,18 @@ class AggressiveBrain final : public AgentBrain {
 public:
     Action decide(const Observation& observation) override;
 };
+
+// Memoryless reference policy: when hungry it walks towards the nearest food it can
+// currently see (axis-aligned, no pathfinding); otherwise it wanders. It keeps no
+// map and learns nothing, so it measures what perception alone achieves. Any agent
+// that claims to use memory or learning should beat it on tasks where food is out of
+// sight.
+class GreedyFoodBrain final : public AgentBrain {
+public:
+    explicit GreedyFoodBrain(unsigned int seed = 1);
+    Action decide(const Observation& observation) override;
+
+private:
+    unsigned int next();
+    unsigned int state_;
+};

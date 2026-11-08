@@ -21,7 +21,10 @@ def main():
     parser.add_argument('--ticks', type=positive, required=True)
     parser.add_argument('--seed', type=int, required=True)
     parser.add_argument('--no-reproduction', action='store_true')
-    parser.add_argument('--brain', choices=('hdc', 'graph', 'learned'), default='hdc')
+    parser.add_argument('--brain', choices=('hdc', 'graph', 'learned', 'random', 'greedy'), default='hdc')
+    parser.add_argument('--layout-seed', type=int,
+                        help='randomise source and start positions (and per-agent brain seeds); '
+                             'without it the layout is the fixed historical one')
     parser.add_argument('--skills', type=pathlib.Path, help='LearnedBrain skill file')
     parser.add_argument('--no-random-food', action='store_true')
     parser.add_argument('--sources-per-room', type=int, choices=range(1, 5), default=1)
@@ -33,6 +36,8 @@ def main():
     args = parser.parse_args()
     if not 0 <= args.seed <= 0xffffffff:
         parser.error('seed must be between 0 and 4294967295')
+    if args.layout_seed is not None and not 0 <= args.layout_seed <= 0xffffffff:
+        parser.error('layout seed must be between 0 and 4294967295')
     if args.skills and args.brain != 'learned':
         parser.error('--skills requires --brain learned')
     skills = args.skills.resolve(strict=True) if args.skills else None
@@ -41,7 +46,7 @@ def main():
     metadata = {'formatVersion': 1, 'seed': args.seed, 'requestedTicks': args.ticks,
                 'snapshotEvery': args.snapshot_every, 'scenario': 'gui', 'brain': args.brain,
                 'reproduction': args.brain == 'hdc' and not args.no_reproduction,
-                'sourcesPerRoom': args.sources_per_room, 'randomFood': not args.no_random_food,
+                'layoutSeed': args.layout_seed, 'sourcesPerRoom': args.sources_per_room, 'randomFood': not args.no_random_food,
                 'skillsSha256': hashlib.sha256(skills.read_bytes()).hexdigest() if skills else None,
                 'binary': str(binary), 'binarySha256': hashlib.sha256(binary.read_bytes()).hexdigest()}
     (args.output / 'metadata.json').write_text(json.dumps(metadata, indent=2) + '\n', encoding='utf-8')
@@ -52,6 +57,8 @@ def main():
     if args.no_random_food:
         command_line.append('--no-random-food')
     command_line += ['--sources-per-room', str(args.sources_per_room)]
+    if args.layout_seed is not None:
+        command_line += ['--layout-seed', str(args.layout_seed)]
     command_line += ['--brain', args.brain]
     if skills:
         command_line += ['--skills', str(skills)]

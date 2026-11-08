@@ -396,6 +396,84 @@ failure, cross-run determinism), HDC offspring distillation (safety-summary inhe
 fresh per-agent memory, deterministic inheritance, non-reproducible brains), and the
 survival-urgency food drive.
 
+## Reference baselines and measurement tools
+
+Learning claims need something to be measured against. Two memoryless baselines and
+two measurement tools exist for that purpose.
+
+- `GreedyFoodBrain` (`--brain greedy`): when hungry it walks towards the nearest food it
+  can currently see, otherwise it wanders. No map, no learning. Anything that claims to
+  use memory must beat it where food is out of sight.
+- `RandomBrain` (`--brain random`): the lower bound.
+- `--layout-seed N` (backend, `gui/server.py`, `tools/run_experiment.py`): draws source and
+  start cells at random inside the rooms and gives every agent its own brain seed. Without
+  it the historical fixed layout is used and nothing changes. Note that `--seed` alone only
+  affects random food spawning, so with `--no-random-food` different `--seed` values give
+  *identical* runs; use `--layout-seed` to get different worlds.
+- `tools/sweep.py`: runs several brains over many layout seeds and reports, per brain, how
+  many agents survive the horizon, the mean lifetime with a bootstrap 95% interval taken
+  **over worlds** (the three agents of a world share food, so they are not independent),
+  and meals per 1000 alive ticks.
+
+```bash
+python3 tools/sweep.py --binary build-release/bin/Release/arena_gui_backend \
+    --brains graph,hdc,greedy,learned,random --layout-seeds 20 --ticks 2000 --csv sweep.csv
+```
+
+Result at the commit that introduced it (10 worlds, 2000 ticks, no reproduction, random
+food on, one source per room; rerun with more seeds before relying on the intervals):
+
+| brain | agents alive at end | mean lifetime [95% CI over worlds] | worlds with all 3 alive |
+| --- | --- | --- | --- |
+| graph | 29/30 | 1947 [1840, 2000] | 9/10 |
+| hdc | 1/30 | 793 [642, 933] | 0/10 |
+| greedy | 3/30 | 795 [565, 1072] | 0/10 |
+| learned | 0/30 | 210 [201, 220] | 0/10 |
+| random | 0/30 | 225 [208, 247] | 0/10 |
+
+The memoryless greedy baseline lives as long as the current HDC brain, so the HDC policy
+does not yet demonstrate that its memory or learning contributes to survival.
+
+### Learning-curve benchmark (`memory_curve`)
+
+`build-release/memory_curve` measures one thing: does an agent get faster at finding food
+that is out of sight and always in the same place? One open 30x14 room per seed, food at
+a fixed random cell, four possible start cells at Manhattan distance >= 12 (vision is 5),
+random initial facing per episode, 60 episodes per world. Every brain is run twice on the
+same episode sequence: *persistent* (one brain object across episodes, free to learn) and
+*fresh* (a new brain each episode, the memory-reset control). The shortest possible time
+is computed by BFS over position, facing and energy and printed as `optimal`.
+
+```bash
+./build-release/memory_curve                      # all brains, 10 worlds x 60 episodes
+./build-release/memory_curve --brains hdc,graph --seeds 20 --csv curve.csv
+```
+
+The CTest entry `arena_memory_curve_self_test` checks the BFS optimum, the greedy baseline,
+determinism and that the food is always out of sight; the full run is done by hand.
+A first version of this task always started on the left facing right with the food on the
+right, and "walk straight" solved it for every brain; it said nothing about memory. The
+current starts and facings come from all sides for that reason.
+
+Result at the commit that introduced it (median ticks / % of episodes that ate, 10 worlds;
+failures count as 201; episodes 0-9 and 50-59):
+
+| brain | persistent, first block | persistent, last block | fresh (control), last block |
+| --- | --- | --- | --- |
+| optimal | 31 | 31 | 31 |
+| graph | 35 / 92% | 32 / 100% | 116 / 58% |
+| hdc | 201 / 50% | 201 / 45% | 92 / 60% |
+| learned | 201 / 0% | 201 / 3% | 201 / 0% |
+| greedy | 201 / 46% | 201 / 36% | 201 / 44% |
+| random | 201 / 0% | 201 / 0% | 201 / 0% |
+
+`graph` improves from the first episodes and approaches the optimum, which is what a map
+memory should do. `hdc` shows no improvement with experience: its success rate stays between
+45% and 58% and is, if anything, below that of a brain with its memory wiped (the gap is within
+noise for most blocks, so read it as "no learning demonstrated", not as "learning hurts").
+Success varies strongly between worlds (some worlds are hard for every brain without a
+map), so compare persistent with fresh *within* a world, which the benchmark does.
+
 ## Current limitations / next research steps
 
 ### Learned motor policy (experimental alternative)
