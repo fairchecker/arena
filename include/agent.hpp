@@ -3,6 +3,7 @@
 #include "tile.hpp"
 #include "types.hpp"
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -17,6 +18,8 @@ struct AgentView {
     int damage{0};
     int visionRange{0};
     int inspectRange{0};
+    int hunger{0};
+    int maxHunger{100};
 };
 
 // Passive perception deliberately reveals location and orientation, not target health.
@@ -54,7 +57,9 @@ enum class ActionType {
     Rotate,
     Attack,
     Eat,
-    Inspect
+    Inspect,
+    Push,
+    Reproduce
 };
 
 struct Action {
@@ -68,6 +73,8 @@ struct Action {
     static Action attack() { return {ActionType::Attack, Rotation::Up, {0, 0}}; }
     static Action eat() { return {ActionType::Eat, Rotation::Up, {0, 0}}; }
     static Action inspect(Position target) { return {ActionType::Inspect, Rotation::Up, target}; }
+    static Action push() { return {ActionType::Push, Rotation::Up, {0, 0}}; }
+    static Action reproduce() { return {ActionType::Reproduce, Rotation::Up, {0, 0}}; }
 };
 
 // A brain executes in-process. It receives a read-only snapshot and returns one action.
@@ -76,6 +83,11 @@ class AgentBrain {
 public:
     virtual ~AgentBrain() = default;
     virtual Action decide(const Observation& observation) = 0;
+
+    // Asexual reproduction hook. Returns a freshly constructed child brain seeded
+    // with a distilled, bounded subset of this brain's learned experience, or
+    // nullptr when the brain cannot reproduce. The default is not reproducible.
+    virtual std::unique_ptr<AgentBrain> offspring() const { return nullptr; }
 };
 
 class RandomBrain final : public AgentBrain {

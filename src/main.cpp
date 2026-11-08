@@ -12,6 +12,8 @@ const char* actionName(ActionType type) {
         case ActionType::Attack: return "attack";
         case ActionType::Eat: return "eat";
         case ActionType::Inspect: return "inspect";
+        case ActionType::Push: return "push";
+        case ActionType::Reproduce: return "reproduce";
     }
     return "unknown";
 }

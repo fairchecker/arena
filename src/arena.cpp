@@ -19,6 +19,10 @@ bool Arena::setWall(Position position, bool wall) {
     return world_.setWalkable(position, !wall);
 }
 
+bool Arena::addCrate(Position position) { return world_.setCrate(position); }
+
+bool Arena::addFoodSource(Position position) { return world_.setFoodSource(position); }
+
 Observation Arena::observe(EntityId id) const {
     Observation observation;
     const ArenaEntity* self = entities_.getEntity(id);
@@ -28,7 +32,7 @@ Observation Arena::observe(EntityId id) const {
     observation.self = {
         self->getPosition(), self->getDirection(), self->getHealth(), self->getMaxHealth(),
         self->getEnergy(), self->getMaxEnergy(), self->getDamage(),
-        self->getVisionRange(), self->getInspectRange()
+        self->getVisionRange(), self->getInspectRange(), self->getHunger(), ArenaEntity::MaxHunger
     };
     observation.visibleEntities = entities_.watch(id);
     observation.lastAction = self->getLastAction();
@@ -41,7 +45,7 @@ Observation Arena::observe(EntityId id) const {
             const Position position{row, column};
             if (manhattanDistance(origin, position) > range) continue;
             const Tile& tile = world_.getTile(position);
-            observation.visibleTiles.push_back({position, tile.walkable, tile.food});
+            observation.visibleTiles.push_back({position, tile.walkable, tile.food, tile.crate, tile.foodSource});
         }
     }
     return observation;
@@ -53,6 +57,17 @@ bool Arena::isVisibleTo(EntityId observerId, Position targetPosition) const {
     const ArenaEntity* target = targetId ? entities_.getEntity(*targetId) : nullptr;
     return observer && target && *targetId != observerId && observer->isAlive() && target->isAlive() &&
            manhattanDistance(observer->getPosition(), targetPosition) <= observer->getVisionRange();
+}
+
+std::optional<Position> Arena::findSpawnPosition(Position parent) const {
+    // Deterministic search order stays part of the environment semantics.
+    for (const Rotation direction : {Rotation::Up, Rotation::Right, Rotation::Down, Rotation::Left}) {
+        const Position candidate = parent + getFromRotation(direction);
+        if (!world_.inBounds(candidate) || world_.isOccupied(candidate)) continue;
+        const Tile& tile = world_.getTile(candidate);
+        if (tile.walkable && !tile.crate) return candidate;
+    }
+    return std::nullopt;
 }
 
 ActionResult Arena::resolve(EntityId actorId, const Action& action) {
@@ -89,6 +104,12 @@ ActionResult Arena::resolve(EntityId actorId, const Action& action) {
                 " health and " + std::to_string(restoredEnergy) + " energy"};
         }
         case ActionType::Inspect: {
+            if (world_.inBounds(action.targetPosition) && world_.getTile(action.targetPosition).crate &&
+                manhattanDistance(actor->getPosition(), action.targetPosition) <= actor->getVisionRange() &&
+                manhattanDistance(actor->getPosition(), action.targetPosition) <= actor->getInspectRange()) {
+                actor->setLastInspection({true, action.targetPosition, {0, ObjectType::Crate, true}, "crate inspected"});
+                return {true, "crate inspected"};
+            }
             if (!isVisibleTo(actorId, action.targetPosition)) {
                 InspectionResult failed{false, action.targetPosition, {}, "target is not visible"};
                 actor->setLastInspection(std::move(failed));
@@ -103,6 +124,40 @@ ActionResult Arena::resolve(EntityId actorId, const Action& action) {
             }
             actor->setLastInspection({true, action.targetPosition, *info, "inspection complete"});
             return {true, "inspection complete"};
+        }
+        case ActionType::Push: {
+            const Position direction = getFromRotation(actor->getDirection());
+            if (actor->getEnergy() <= 0 || !world_.pushCrate(actorId, actor->getPosition(), direction)) {
+                return {false, "crate cannot be pushed or insufficient energy"};
+            }
+            actor->setPosition(actor->getPosition() + direction);
+            actor->spendEnergy(1);
+            return {true, "pushed crate"};
+        }
+        case ActionType::Reproduce: {
+            if (actor->getEnergy() < reproductionCost_) {
+                return {false, "insufficient energy to reproduce"};
+            }
+            if (entities_.aliveCount() >= maxPopulation_) {
+                return {false, "population cap reached"};
+            }
+            auto childBrain = actor->makeOffspringBrain();
+            if (!childBrain) {
+                return {false, "brain cannot reproduce"};
+            }
+            const auto spawn = findSpawnPosition(actor->getPosition());
+            if (!spawn) {
+                return {false, "no free tile to spawn offspring"};
+            }
+            // Offspring inherit the parent's physical maxima and start fully charged.
+            // Per-agent memory (transitions, visits) restarts; distilled experience
+            // travels through the brain's offspring() hook.
+            ArenaEntity child(*spawn, std::move(childBrain), actor->getDirection(),
+                              actor->getMaxHealth(), actor->getDamage(), actor->getMaxEnergy(),
+                              actor->getVisionRange(), actor->getInspectRange());
+            const EntityId childId = entities_.addEntity(std::move(child));
+            if (childId >= 0) actor->spendEnergy(reproductionCost_);
+            return childId >= 0 ? ActionResult{true, "reproduced offspring"} : ActionResult{false, "could not place offspring"};
         }
     }
     return {false, "unknown action"};
@@ -158,8 +213,13 @@ TickReport Arena::step() {
         report.actions.push_back({decision.id, decision.action, std::move(result)});
     }
 
+    // Hunger advances once after action resolution for every surviving agent.
+    for (const EntityId id : entities_.aliveIds()) {
+        entities_.getEntity(id)->advanceHunger();
+    }
     entities_.checkHealth();
     ++tick_;
+    if (tick_ % 50U == 0U) world_.refillFoodSources();
     report.aliveAgents = entities_.aliveCount();
     return report;
 }

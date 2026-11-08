@@ -28,6 +28,7 @@ public:
 
     void checkHealth();
     std::vector<EntityId> aliveIds() const;
+    std::vector<EntityId> allIds() const;
     std::size_t size() const noexcept { return entities_.size(); }
     std::size_t aliveCount() const noexcept;
 

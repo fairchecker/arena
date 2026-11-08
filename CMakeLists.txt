@@ -3,6 +3,7 @@ project(arena LANGUAGES CXX)
 
 option(ARENA_BUILD_TESTS "Build arena unit tests" ON)
 option(ARENA_BUILD_DEMO "Build the arena demo executable" ON)
+option(ARENA_BUILD_GUI "Build the local GUI simulation backend" ON)
 option(ARENA_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 
 function(arena_apply_compile_options target)
@@ -22,6 +23,7 @@ add_library(arena_core
     src/arena.cpp
     src/entity.cpp
     src/entity_registry.cpp
+    src/hdc_brain.cpp
     src/world.cpp
 )
 target_include_directories(arena_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -44,6 +46,15 @@ if(ARENA_BUILD_DEMO)
     arena_apply_compile_options(arena_demo)
 endif()
 
+if(ARENA_BUILD_GUI)
+    add_executable(arena_gui_backend src/gui_backend.cpp)
+    target_link_libraries(arena_gui_backend PRIVATE arena_core)
+    set_target_properties(arena_gui_backend PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${ARENA_RUNTIME_OUTPUT_DIRECTORY}"
+    )
+    arena_apply_compile_options(arena_gui_backend)
+endif()
+
 if(ARENA_BUILD_TESTS)
     enable_testing()
     add_executable(arena_tests tests/arena_tests.cpp)
@@ -53,4 +64,19 @@ if(ARENA_BUILD_TESTS)
     )
     arena_apply_compile_options(arena_tests)
     add_test(NAME arena_tests COMMAND arena_tests)
+    add_executable(hdc_tests tests/hdc_tests.cpp)
+    target_link_libraries(hdc_tests PRIVATE arena_core)
+    arena_apply_compile_options(hdc_tests)
+    add_test(NAME hdc_tests COMMAND hdc_tests)
+    if(ARENA_BUILD_GUI)
+        find_package(Python3 COMPONENTS Interpreter QUIET)
+        if(Python3_Interpreter_FOUND)
+            add_test(NAME arena_gui_smoke
+                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/gui_smoke.py
+                        $<TARGET_FILE:arena_gui_backend> ${CMAKE_CURRENT_SOURCE_DIR}/gui/server.py)
+            add_test(NAME arena_experiment_smoke
+                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/experiment_smoke.py
+                        ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_experiment.py $<TARGET_FILE:arena_gui_backend>)
+        endif()
+    endif()
 endif()

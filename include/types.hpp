@@ -84,10 +84,12 @@ inline int manhattanDistance(const Position& lhs, const Position& rhs) noexcept 
 enum class ObjectType {
     Entity,
     Resource,
-    Unknown
+    Unknown,
+    Crate
 };
 
 struct InspectInfo {
     int health{0};
     ObjectType type{ObjectType::Unknown};
+    bool movable{false};
 };

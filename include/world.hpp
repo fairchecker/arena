@@ -24,6 +24,10 @@ public:
     bool setWalkable(Position position, bool walkable);
     bool addFood(Position position, int amount);
     bool consumeFood(Position position, int amount = 1);
+    bool setCrate(Position position, bool present = true);
+    bool pushCrate(EntityId id, Position from, Position direction);
+    bool setFoodSource(Position position);
+    void refillFoodSources();
 
     bool placeEntity(EntityId id, Position position);
     bool moveEntity(EntityId id, Position from, Position to);

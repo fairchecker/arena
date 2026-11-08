@@ -42,6 +42,22 @@ void ArenaEntity::spendEnergy(int amount) noexcept {
     if (amount > 0) energy_ = std::max(0, energy_ - amount);
 }
 
+void ArenaEntity::advanceHunger() noexcept {
+    if (!isAlive()) return;
+    if (hunger_ < MaxHunger) ++hunger_;
+    if (hunger_ == MaxHunger && ++starvingTicks_ >= 10) {
+        starvingTicks_ = 0;
+        takeDamage(1);
+    }
+}
+
+void ArenaEntity::satisfyHunger(int amount) noexcept {
+    if (amount > 0) {
+        hunger_ = std::max(0, hunger_ - amount);
+        if (hunger_ < MaxHunger) starvingTicks_ = 0;
+    }
+}
+
 InspectInfo ArenaEntity::inspect() const noexcept {
     return {health_, type_};
 }
@@ -54,4 +70,8 @@ void ArenaEntity::takeDamage(int damage) noexcept {
 
 Action ArenaEntity::decide(const Observation& observation) {
     return brain_ ? brain_->decide(observation) : Action::wait();
+}
+
+std::unique_ptr<AgentBrain> ArenaEntity::makeOffspringBrain() const {
+    return brain_ ? brain_->offspring() : nullptr;
 }

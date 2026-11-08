@@ -27,7 +27,7 @@ bool World::inBounds(Position position) const noexcept {
 }
 
 bool World::isWalkable(Position position) const noexcept {
-    return inBounds(position) && tiles_[indexOf(position)].walkable;
+    return inBounds(position) && tiles_[indexOf(position)].walkable && !tiles_[indexOf(position)].crate;
 }
 
 bool World::isOccupied(Position position) const noexcept {
@@ -56,7 +56,7 @@ Tile& World::getTile(Position position) {
 void World::setTile(const Tile& tile, Position position) {
     Tile& current = getTile(position);
     if (tile.food < 0) throw std::invalid_argument("Tile food cannot be negative");
-    if (current.entityId && !tile.walkable) {
+    if ((current.entityId && (!tile.walkable || tile.crate)) || (tile.crate && !tile.walkable)) {
         throw std::invalid_argument("Cannot make an occupied tile non-walkable");
     }
     Tile replacement = tile;
@@ -66,7 +66,7 @@ void World::setTile(const Tile& tile, Position position) {
 }
 
 bool World::setWalkable(Position position, bool walkable) {
-    if (!inBounds(position) || (isOccupied(position) && !walkable)) return false;
+    if (!inBounds(position) || ((!walkable) && (isOccupied(position) || getTile(position).crate))) return false;
     getTile(position).walkable = walkable;
     return true;
 }
@@ -85,6 +85,42 @@ bool World::consumeFood(Position position, int amount) {
     if (tile.food < amount) return false;
     tile.food -= amount;
     return true;
+}
+
+bool World::setCrate(Position position, bool present) {
+    if (!inBounds(position)) return false;
+    Tile& tile = getTile(position);
+    if (present && (!tile.walkable || tile.entityId || tile.crate)) return false;
+    tile.crate = present;
+    return true;
+}
+
+bool World::pushCrate(EntityId id, Position from, Position direction) {
+    if (direction != Position{-1, 0} && direction != Position{1, 0} &&
+        direction != Position{0, -1} && direction != Position{0, 1}) return false;
+    const Position cratePosition = from + direction;
+    const Position destination = cratePosition + direction;
+    if (!inBounds(from) || !inBounds(cratePosition) || !isWalkable(destination) || isOccupied(destination)) return false;
+    Tile& source = getTile(from);
+    Tile& crate = getTile(cratePosition);
+    if (!source.entityId || *source.entityId != id || !crate.crate || crate.entityId) return false;
+    crate.crate = false;
+    getTile(destination).crate = true;
+    source.entityId.reset();
+    crate.entityId = id;
+    return true;
+}
+
+bool World::setFoodSource(Position position) {
+    if (!inBounds(position) || !getTile(position).walkable) return false;
+    getTile(position).foodSource = true;
+    return true;
+}
+
+void World::refillFoodSources() {
+    for (auto& tile : tiles_) {
+        if (tile.foodSource && tile.walkable && !tile.crate && tile.food == 0) tile.food = 1;
+    }
 }
 
 bool World::placeEntity(EntityId id, Position position) {

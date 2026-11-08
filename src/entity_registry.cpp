@@ -32,6 +32,14 @@ const ArenaEntity* EntityRegistry::getEntity(EntityId entityId) const noexcept {
     return it == entities_.end() ? nullptr : it->second.get();
 }
 
+std::vector<EntityId> EntityRegistry::allIds() const {
+    std::vector<EntityId> ids;
+    ids.reserve(entities_.size());
+    for (const auto& entry : entities_) ids.push_back(entry.first);
+    std::sort(ids.begin(), ids.end());
+    return ids;
+}
+
 bool EntityRegistry::move(EntityId id) {
     ArenaEntity* entity = getEntity(id);
     if (!entity || !entity->isAlive() || entity->getEnergy() <= 0) return false;
@@ -57,6 +65,7 @@ bool EntityRegistry::eat(EntityId id) {
     if (!world_.consumeFood(position)) return false;
     entity->restoreHealth(2);
     entity->restoreEnergy(2);
+    entity->satisfyHunger(40);
     return true;
 }
 

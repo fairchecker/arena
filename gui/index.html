@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arena</title>
+<style>
+  body { margin: 0; background: #111827; color: #e5e7eb; font: 16px system-ui, sans-serif; }
+  main { max-width: 1000px; margin: auto; padding: 24px; }
+  h1 { margin: 0 0 8px; } p { color: #aab8cc; }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 20px 0; }
+  button, select { padding: 9px 14px; border: 1px solid #53647b; border-radius: 6px; background: #253449; color: white; font: inherit; cursor: pointer; }
+  button:hover { background: #344b68; } button:disabled { opacity: .5; cursor: default; }
+  .layout { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 24px; }
+  canvas { width: min(100%, 720px); height: auto; border: 1px solid #53647b; border-radius: 6px; background: #1c293b; }
+  aside { min-width: 200px; flex: 1; } .agent { padding: 10px 0; border-bottom: 1px solid #37465b; }
+  #error { color: #fca5a5; } #actions { color: #c5d3e3; line-height: 1.7; }
+</style>
+</head>
+<body><main>
+  <h1>Arena</h1><p>Исследователи HDC: комнаты, ящики и возобновляемые источники пищи.</p>
+  <div class="controls">
+    <button id="play">▶ Запустить</button><button id="step">Шаг</button><button id="reset">Сначала</button>
+    <label>Скорость <select id="speed"><option value="1000">1 шаг/с</option><option value="500" selected>2 шага/с</option><option value="200">5 шагов/с</option><option value="100">10 шагов/с</option></select></label>
+    <label>Карта посещений <select id="visits"><option value="none">Выключена</option></select></label>
+    <strong id="status"></strong>
+  </div>
+  <div id="error" role="alert"></div>
+  <div class="layout"><canvas id="world" width="720" height="480" aria-label="Карта арены"></canvas>
+    <aside><h2>Агенты</h2><div id="agents"></div><h2>Память модели</h2><div id="model"></div><h2>Последний шаг</h2><div id="actions">Пока нет действий</div></aside>
+  </div>
+</main>
+<script>
+const canvas = document.querySelector('#world'), ctx = canvas.getContext('2d');
+const play = document.querySelector('#play'), step = document.querySelector('#step'), reset = document.querySelector('#reset');
+const speed = document.querySelector('#speed'), error = document.querySelector('#error'), visits = document.querySelector('#visits');
+let running = false, busy = false, timer = null, state = null;
+function pause() { running = false; clearTimeout(timer); play.textContent = '▶ Запустить'; }
+function draw(data) {
+  state = data;
+  document.querySelector('#status').textContent = `Такт: ${data.tick} · живы: ${data.alive}`;
+  const w = canvas.width / data.width, h = canvas.height / data.height;
+  const selected = data.models.find(model => String(model.id) === visits.value);
+  // Keep the visit overlay selector in sync with the living HDC agents.
+  const current = visits.value;
+  visits.innerHTML = '<option value="none">Выключена</option>' +
+    data.models.map(m => `<option value="${m.id}">Агент ${m.id}</option>`).join('');
+  visits.value = current && data.models.some(m => String(m.id) === current) ? current : 'none';
+  const visited = new Map((selected ? selected.visits : []).map(([row, col, count]) => [row * data.width + col, count]));
+  data.tiles.forEach((tile, i) => {
+    const x = (i % data.width) * w, y = Math.floor(i / data.width) * h;
+    ctx.fillStyle = tile.wall ? '#42516a' : '#1c293b'; ctx.fillRect(x, y, w, h);
+    if (visited.has(i)) { ctx.fillStyle = `rgba(56, 189, 248, ${Math.min(.7, .2 + .12 * Math.log2(visited.get(i)))})`; ctx.fillRect(x, y, w, h); }
+    ctx.strokeStyle = '#344257'; ctx.strokeRect(x, y, w, h);
+    if (tile.source) { ctx.strokeStyle = '#facc15'; ctx.lineWidth = 2; ctx.strokeRect(x+3, y+3, w-6, h-6); ctx.lineWidth = 1; }
+    if (tile.food) { ctx.fillStyle = '#4ade80'; ctx.beginPath(); ctx.arc(x+w/2, y+h/2, Math.min(w,h)*.18, 0, Math.PI*2); ctx.fill(); }
+    if (tile.crate) { ctx.fillStyle = '#b77940'; ctx.fillRect(x+3, y+3, w-6, h-6); ctx.strokeStyle = '#fcd19b'; ctx.strokeRect(x+3, y+3, w-6, h-6); }
+  });
+  data.agents.forEach(a => {
+    const x = (a.column + .5)*w, y = (a.row + .5)*h;
+    ctx.save(); ctx.translate(x, y); ctx.rotate(a.direction * Math.PI/2);
+    ctx.fillStyle = ['#60a5fa', '#fb923c', '#c084fc'][a.id] || '#fff'; ctx.beginPath(); ctx.moveTo(0,-h*.4); ctx.lineTo(w*.38,h*.36); ctx.lineTo(-w*.38,h*.36); ctx.closePath(); ctx.fill(); ctx.restore();
+    ctx.fillStyle = 'white'; ctx.font = 'bold 9px sans-serif'; ctx.fillText(a.id, x-3, y+3);
+  });
+  document.querySelector('#agents').innerHTML = data.agents.map(a => `<div class="agent"><strong>${['🔵', '🟠', '🟣'][a.id] || '⚪'} HDC #${a.id}</strong><br>Здоровье: ${a.health}/${a.maxHealth}<br>Энергия: ${a.energy}/${a.maxEnergy}<br>Голод: ${a.hunger}/${a.maxHunger}<br>Клетка: ${a.row}, ${a.column}</div>`).join('') || 'Нет живых агентов';
+  document.querySelector('#model').innerHTML = data.models.map(m => `<div class="agent"><strong>#${m.id}</strong> · мест: ${m.visited}<br>Кластеры: ${m.clusters} · переходы: ${m.transitions}<br>Ошибка: ${m.predictionError === null ? 'нет прогноза' : (m.predictionError * 100).toFixed(1) + '%'}</div>`).join('');
+  document.querySelector('#actions').textContent = data.actions.map(a => `#${a.id}: ${a.action} — ${a.success ? 'успех' : 'неудача'}`).join('\n') || 'Пока нет действий';
+  document.querySelector('#actions').style.whiteSpace = 'pre-line';
+  if (!data.alive) pause();
+}
+async function request(command) {
+  if (busy) return;
+  busy = true; step.disabled = reset.disabled = play.disabled = true;
+  try {
+    const response = await fetch('/' + command, {method:'POST', headers:{'X-Arena-Request':'1'}});
+    if (!response.ok) throw new Error(`Ошибка сервера: ${response.status}`);
+    draw(await response.json()); error.textContent = '';
+  } catch (e) { pause(); error.textContent = `Не удалось связаться с симуляцией: ${e.message}`; }
+  finally { busy = false; step.disabled = reset.disabled = play.disabled = false; }
+}
+async function advance() {
+  if (!running) return;
+  await request('step');
+  if (running) timer = setTimeout(advance, Number(speed.value));
+}
+play.onclick = () => { if (running) pause(); else if (state && state.alive) { running = true; play.textContent = '⏸ Пауза'; advance(); } };
+step.onclick = () => { pause(); request('step'); };
+reset.onclick = () => { pause(); request('reset'); };
+visits.onchange = () => { if (state) draw(state); };
+request('state');
+</script></body></html>

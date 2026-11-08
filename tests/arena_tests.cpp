@@ -327,6 +327,92 @@ void testInvalidWorldDimensions() {
     try { World world(0, 4); } catch (const std::invalid_argument&) { thrown = true; }
     assert(thrown);
 }
+
+// A minimal reproducible brain for exercising the arena-level reproduction
+// mechanics without depending on the HDC policy's autonomous choices.
+class ReproducingBrain final : public AgentBrain {
+public:
+    explicit ReproducingBrain(unsigned int childSeed) : childSeed_(childSeed) {}
+    Action decide(const Observation& observation) override {
+        return observation.self.energy >= 5 ? Action::reproduce() : Action::wait();
+    }
+    std::unique_ptr<AgentBrain> offspring() const override {
+        return std::make_unique<ReproducingBrain>(childSeed_ + 1U);
+    }
+private:
+    unsigned int childSeed_;
+};
+
+void testReproductionSpawnsOffspringAndSpendsEnergy() {
+    Arena arena(5, 5);
+    const EntityId parent = arena.addAgent(ArenaEntity(
+        {2, 2}, std::make_unique<ReproducingBrain>(10U)));
+    assert(parent == 0);
+    const int energyBefore = arena.getAgent(parent)->getEnergy();
+    const auto report = arena.step();
+    assert(report.actions.size() == 1);
+    assert(report.actions[0].actorId == parent);
+    assert(report.actions[0].result.success);
+    assert(arena.aliveCount() == 2);
+    // Child id is deterministic: parent (0) then child (1).
+    const ArenaEntity* child = arena.getAgent(1);
+    assert(child && child->isAlive());
+    assert(arena.getAgent(parent)->getEnergy() == energyBefore - arena.getReproductionCost());
+    // Child spawned on an adjacent tile.
+    assert(manhattanDistance(arena.getAgent(parent)->getPosition(), child->getPosition()) == 1);
+    assert(arena.getWorld().isOccupied(child->getPosition()));
+}
+
+void testReproductionRequiresEnergy() {
+    Arena arena(3, 3);
+    arena.setReproductionCost(6);
+    assert(arena.addAgent(ArenaEntity(
+        {1, 1}, std::make_unique<ReproducingBrain>(1U), Rotation::Up, 10, 2, 5)) >= 0);
+    const auto report = arena.step();
+    assert(!report.actions[0].result.success);
+    assert(arena.aliveCount() == 1);
+    assert(report.actions[0].result.message == "insufficient energy to reproduce");
+}
+
+void testReproductionRespectsPopulationCap() {
+    Arena arena(6, 6);
+    arena.setMaxPopulation(1);
+    const auto id = arena.addAgent(ArenaEntity(
+        {3, 3}, std::make_unique<ReproducingBrain>(7U)));
+    assert(id == 0);
+    const auto report = arena.step();
+    assert(!report.actions[0].result.success);
+    assert(arena.aliveCount() == 1);
+    assert(report.actions[0].result.message == "population cap reached");
+}
+
+void testReproductionNeedsFreeAdjacentTile() {
+    Arena arena(3, 3);
+    for (const Position wall : {Position{0, 1}, Position{1, 0}, Position{1, 2}, Position{2, 1}}) {
+        assert(arena.setWall(wall));
+    }
+    const auto id = arena.addAgent(ArenaEntity(
+        {1, 1}, std::make_unique<ReproducingBrain>(7U)));
+    assert(id >= 0);
+    const auto report = arena.step();
+    assert(!report.actions[0].result.success);
+    assert(arena.aliveCount() == 1);
+    assert(report.actions[0].result.message == "no free tile to spawn offspring");
+}
+
+void testReproductionIsReproducibleAcrossSeeds() {
+    auto build = []() {
+        Arena arena(5, 5);
+        arena.addAgent(ArenaEntity({2, 2}, std::make_unique<ReproducingBrain>(42U)));
+        arena.step();
+        return std::make_pair(arena.getAgent(1)->getPosition(), arena.aliveCount());
+    };
+    const auto firstRun = build();
+    const auto secondRun = build();
+    assert(firstRun.first == secondRun.first);
+    assert(firstRun.second == secondRun.second);
+    assert(firstRun.second == 2);
+}
 }
 
 int main() {
@@ -347,6 +433,11 @@ int main() {
     testSeededRandomBrainsAreReproducible();
     testWorldOccupancyInvariantUnderLongRun();
     testInvalidWorldDimensions();
+    testReproductionSpawnsOffspringAndSpendsEnergy();
+    testReproductionRequiresEnergy();
+    testReproductionRespectsPopulationCap();
+    testReproductionNeedsFreeAdjacentTile();
+    testReproductionIsReproducibleAcrossSeeds();
     std::cout << "All arena tests passed\n";
     return 0;
 }

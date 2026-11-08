@@ -29,6 +29,10 @@ public:
     int getDamage() const noexcept { return damage_; }
     int getEnergy() const noexcept { return energy_; }
     int getMaxEnergy() const noexcept { return maxEnergy_; }
+    static constexpr int MaxHunger = 100;
+    int getHunger() const noexcept { return hunger_; }
+    void advanceHunger() noexcept;
+    void satisfyHunger(int amount) noexcept;
     void restoreEnergy(int amount) noexcept;
     void spendEnergy(int amount) noexcept;
 
@@ -49,6 +53,12 @@ public:
     int getInspectRange() const noexcept { return inspectRange_; }
 
     Action decide(const Observation& observation);
+    // Distills a child brain via the brain's offspring() hook, or nullptr when
+    // this entity has no brain or its brain cannot reproduce.
+    std::unique_ptr<AgentBrain> makeOffspringBrain() const;
+    // Brain access for diagnostic hooks (e.g. dynamic_cast to HdcBrain).
+    AgentBrain* getBrain() noexcept { return brain_.get(); }
+    const AgentBrain* getBrain() const noexcept { return brain_.get(); }
     void setLastAction(ActionResult result) { lastAction_ = std::move(result); }
     const std::optional<ActionResult>& getLastAction() const noexcept { return lastAction_; }
     void setLastInspection(InspectionResult result) { lastInspection_ = std::move(result); }
@@ -61,6 +71,8 @@ private:
     int damage_;
     int energy_;
     int maxEnergy_;
+    int hunger_{0};
+    int starvingTicks_{0};
     bool alive_{true};
 
     ObjectType type_{ObjectType::Entity};
