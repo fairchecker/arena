@@ -49,6 +49,7 @@ public:
         // Lower bound: object, cluster vector capacity and container values, excluding
         // tree node/allocator overhead and temporary allocations during decisions.
         std::size_t memoryLowerBoundBytes{0};
+        std::size_t rejectedAliases{0};
     };
 
     // `reproduceCost` is this brain's autonomous reproduction threshold: when it is
@@ -59,6 +60,9 @@ public:
     explicit HdcBrain(std::uint32_t seed = 1, int reproduceCost = 0)
         : seed_(seed), reproduceCost_(reproduceCost) {}
     Action decide(const Observation& observation) override;
+    void outcome(const AgentView& state, bool terminal) noexcept override;
+    // Keep learned knowledge but clear temporal/navigation state between episodes.
+    void beginEpisode() noexcept;
 
     // Distills a bounded, pragmatic subset of learned experience into a child:
     // the top MaxInheritedClusters clusters by evidence-weighted safety, carrying
@@ -75,11 +79,14 @@ public:
     // given observation, blending the persistent (possibly inherited) prior with
     // locally observed transitions. Exposed for tests and GUI diagnostics.
     std::array<double, ActionCount> actionSafety(const Observation& observation) const;
+    std::array<double, ActionCount> actionValues(const Observation& observation) const;
     // Diagnostic export only; this is not a checkpoint/restart format.
     void writeSnapshot(std::ostream& output) const;
 
 private:
     struct Cluster {
+        // Critical physical/action context must agree before HDC similarity applies.
+        std::array<int, 7> context{};
         std::array<int, Dimensions> sums{};
         Hypervector prototype{};
         std::size_t samples{0};
@@ -89,6 +96,8 @@ private:
         // It is a running mean of arriving-state safety, maintained independently of
         // the per-generation transition map so it survives distillation.
         std::array<double, ActionCount> quality{};
+        std::array<double, ActionCount> values{};
+        std::array<std::size_t, ActionCount> valueUpdates{};
         // Per-generation count backing the prior mean; resets on distillation so the
         // child's prior starts from the inherited value and adapts by its own data.
         std::array<std::size_t, ActionCount> priorSamples{};
@@ -100,7 +109,8 @@ private:
         std::optional<Hypervector> prediction;
     };
     std::size_t assign(const Hypervector& vector, const Observation& observation);
-    std::optional<std::size_t> nearestClusterIndex(const Hypervector& vector) const;
+    static std::array<int, 7> context(const Observation& observation);
+    std::optional<std::size_t> nearestClusterIndex(const Observation& observation) const;
     bool hasFreeAdjacent(const Observation& observation) const;
     std::uint32_t seed_;
     int reproduceCost_{0};
@@ -113,4 +123,7 @@ private:
     std::optional<unsigned long long> firstTick_;
     std::optional<unsigned long long> lastReproductionAttempt_;
     std::set<std::pair<int, int>> inspectedCrates_;
+    double previousCost_{0};
+    std::optional<double> outcomeReward_;
+    std::size_t rejectedAliases_{0};
 };

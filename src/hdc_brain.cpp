@@ -25,6 +25,54 @@ int bucket(int value, int maximum) {
 double fraction(int value, int maximum) {
     return maximum > 0 ? static_cast<double>(std::clamp(value, 0, maximum)) / maximum : 0.0;
 }
+
+double cost(const AgentView& state) {
+    const double hunger = fraction(state.hunger, state.maxHunger);
+    const double energyDeficit = 1.0 - fraction(state.energy, state.maxEnergy);
+    const double injury = 1.0 - fraction(state.health, state.maxHealth);
+    return 2.0 * hunger * hunger * hunger * hunger +
+        0.15 * energyDeficit * energyDeficit + 2.0 * injury * injury;
+}
+}
+
+void HdcBrain::outcome(const AgentView& state, bool terminal) noexcept {
+    if (!pending_) return;
+    outcomeReward_ = previousCost_ - cost(state) - 0.02 - (terminal ? 5.0 : 0.0);
+    if (terminal) {
+        auto& cluster = clusters_[pending_->cluster];
+        auto& value = cluster.values[pending_->action];
+        value += 0.2 * (*outcomeReward_ - value);
+        ++cluster.valueUpdates[pending_->action];
+        pending_.reset();
+        outcomeReward_.reset();
+    }
+}
+
+void HdcBrain::beginEpisode() noexcept {
+    pending_.reset();
+    predictionError_.reset();
+    outcomeReward_.reset();
+    firstTick_.reset();
+    lastReproductionAttempt_.reset();
+    lastPosition_.reset();
+    visits_.clear();
+    inspectedCrates_.clear();
+    previousCost_ = 0.0;
+}
+
+std::array<int, 7> HdcBrain::context(const Observation& observation) {
+    const auto& self = observation.self;
+    int hereFood = 0, front = 0;
+    const Position ahead = self.position + getFromRotation(self.direction);
+    for (const auto& tile : observation.visibleTiles) {
+        if (tile.position == self.position) hereFood = tile.food > 0 ? 1 : 0;
+        if (tile.position == ahead) front = tile.crate ? 3 : (tile.walkable ? 1 : 2);
+    }
+    for (const auto& entity : observation.visibleEntities)
+        if (entity.position == ahead) front = 4;
+    return {{bucket(self.hunger, self.maxHunger), bucket(self.health, self.maxHealth),
+        bucket(self.energy, self.maxEnergy), static_cast<int>(self.direction), hereFood, front,
+        self.energy > 0 ? 1 : 0}};
 }
 
 HdcBrain::Hypervector HdcBrain::encode(const Observation& o) const {
@@ -85,16 +133,22 @@ double HdcBrain::distance(const Hypervector& a, const Hypervector& b) noexcept {
 }
 
 std::size_t HdcBrain::assign(const Hypervector& vector, const Observation& observation) {
+    const auto key = context(observation);
     std::size_t best = 0;
     double bestDistance = std::numeric_limits<double>::infinity();
     for (std::size_t i = 0; i < clusters_.size(); ++i) {
         const double d = distance(vector, clusters_[i].prototype);
+        if (clusters_[i].context != key) {
+            if (d <= 0.20) ++rejectedAliases_;
+            continue;
+        }
         if (d < bestDistance) { best = i; bestDistance = d; }
     }
     if (clusters_.empty() || bestDistance > 0.20) {
         best = clusters_.size();
         clusters_.emplace_back();
         clusters_.back().quality.fill(0.5);
+        clusters_.back().context = key;
     }
     auto& cluster = clusters_[best];
     // Bound prototype counters and adapt gradually during long runs.
@@ -139,6 +193,7 @@ std::unique_ptr<AgentBrain> HdcBrain::offspring() const {
     for (std::size_t i = 0; i < keep; ++i) {
         const auto& source = clusters_[order[i]];
         Cluster distilled;
+        distilled.context = source.context;
         distilled.prototype = source.prototype;
         for (std::size_t d = 0; d < Dimensions; ++d) distilled.sums[d] = source.prototype[d];
         distilled.samples = 1;
@@ -147,6 +202,7 @@ std::unique_ptr<AgentBrain> HdcBrain::offspring() const {
         // The persistent safety prior is carried over unchanged so accumulated
         // experience reaches grandchildren rather than collapsing to neutral.
         distilled.quality = source.quality;
+        distilled.values = source.values;
         // priorSamples and transitions are left empty: per-agent memory restarts,
         // but the child begins from the inherited prior value.
         child->clusters_.push_back(std::move(distilled));
@@ -154,10 +210,13 @@ std::unique_ptr<AgentBrain> HdcBrain::offspring() const {
     return child;
 }
 
-std::optional<std::size_t> HdcBrain::nearestClusterIndex(const Hypervector& vector) const {
+std::optional<std::size_t> HdcBrain::nearestClusterIndex(const Observation& observation) const {
+    const auto vector = encode(observation);
+    const auto key = context(observation);
     std::size_t best = 0;
     double bestDistance = std::numeric_limits<double>::infinity();
     for (std::size_t i = 0; i < clusters_.size(); ++i) {
+        if (clusters_[i].context != key) continue;
         const double d = distance(vector, clusters_[i].prototype);
         if (d < bestDistance) { best = i; bestDistance = d; }
     }
@@ -168,7 +227,7 @@ std::optional<std::size_t> HdcBrain::nearestClusterIndex(const Hypervector& vect
 std::array<double, HdcBrain::ActionCount> HdcBrain::actionSafety(const Observation& observation) const {
     std::array<double, ActionCount> result{};
     result.fill(0.5);
-    const auto nearest = nearestClusterIndex(encode(observation));
+    const auto nearest = nearestClusterIndex(observation);
     if (!nearest) return result;
     const auto& cluster = clusters_[*nearest];
     for (std::size_t action = 0; action < ActionCount; ++action) {
@@ -185,6 +244,11 @@ std::array<double, HdcBrain::ActionCount> HdcBrain::actionSafety(const Observati
                           static_cast<double>(total) * local) / (PriorStrength + static_cast<double>(total));
     }
     return result;
+}
+
+std::array<double, HdcBrain::ActionCount> HdcBrain::actionValues(const Observation& observation) const {
+    const auto nearest = nearestClusterIndex(observation);
+    return nearest ? clusters_[*nearest].values : std::array<double, ActionCount>{};
 }
 
 bool HdcBrain::hasFreeAdjacent(const Observation& observation) const {
@@ -264,6 +328,8 @@ Action HdcBrain::decide(const Observation& observation) {
         [&](const EntityView& entity) { return entity.position == forward; });
     std::size_t chosen = 0;
     double bestScore = -std::numeric_limits<double>::infinity();
+    std::array<bool, ActionCount> available{};
+    std::array<double, ActionCount> bonuses{};
     for (std::size_t action = 0; action < ActionCount; ++action) {
         if (action == 6 && !inspectTarget) continue;
         if (action == 1 && (observation.self.energy <= 0 || occupiedAhead ||
@@ -278,7 +344,8 @@ Action HdcBrain::decide(const Observation& observation) {
             (lastReproductionAttempt_ && observation.tick - *lastReproductionAttempt_ < 50) ||
             observation.self.energy < reproduceCost_ ||
             hunger >= 0.5 || fraction(observation.self.health, observation.self.maxHealth) < 0.5 ||
-            !hasFreeAdjacent(observation))) continue;
+             !hasFreeAdjacent(observation))) continue;
+        available[action] = true;
         const auto& counts = clusters_[current].transitions[action];
         std::size_t total = 0;
         double expectedPreference = 0;
@@ -352,9 +419,33 @@ Action HdcBrain::decide(const Observation& observation) {
             std::any_of(observation.visibleTiles.begin(), observation.visibleTiles.end(), [&](const TileView& tile) {
                 return tile.crate && tile.position == *inspectTarget;
             })) actionBias += 0.5;
-        const double score = uncertainty + 0.5 * novelty + 0.05 * preference + foodDrive + placeBonus + actionBias + inheritedPrior;
+        // Learned return is the primary preference; curiosity fades with hunger
+        // and injury. Food guidance remains a modest prior, not learned evidence.
+        const double curiosity = 0.2 + 0.8 * (1.0 - hunger) * (1.0 - hunger) * healthFraction;
+        const double score = clusters_[current].values[action] +
+            curiosity * (0.3 * uncertainty + 0.15 * novelty + placeBonus) +
+            foodDrive + actionBias + 0.05 * inheritedPrior;
+        (void)preference;
+        bonuses[action] = score - clusters_[current].values[action];
         if (score > bestScore) { bestScore = score; chosen = action; }
     }
+    if (pending_) {
+        double future = -std::numeric_limits<double>::infinity();
+        for (std::size_t a = 0; a < ActionCount; ++a)
+            if (available[a]) future = std::max(future, clusters_[current].values[a]);
+        auto& source = clusters_[pending_->cluster];
+        auto& value = source.values[pending_->action];
+        const double reward = outcomeReward_.value_or(previousCost_ - cost(observation.self) - 0.02);
+        value += 0.2 * (reward + 0.98 * future - value);
+        ++source.valueUpdates[pending_->action];
+    }
+    bestScore = -std::numeric_limits<double>::infinity();
+    for (std::size_t a = 0; a < ActionCount; ++a) {
+        const double score = clusters_[current].values[a] + bonuses[a];
+        if (available[a] && score > bestScore) { bestScore = score; chosen = a; }
+    }
+    outcomeReward_.reset();
+    previousCost_ = cost(observation.self);
     const auto& counts = clusters_[current].transitions[chosen];
     std::size_t predicted = 0, highest = 0;
     for (const auto& entry : counts) {
@@ -371,6 +462,7 @@ HdcBrain::Diagnostics HdcBrain::diagnostics() const noexcept {
     result.transitions = transitionCount_;
     result.predictionError = predictionError_;
     result.visitedPlaces = visits_.size();
+    result.rejectedAliases = rejectedAliases_;
     std::size_t informed = 0;
     double maxGap = 0.0;
     result.memoryLowerBoundBytes = sizeof(*this) + clusters_.capacity() * sizeof(Cluster) +
@@ -395,6 +487,10 @@ HdcBrain::Diagnostics HdcBrain::diagnostics() const noexcept {
 
 void HdcBrain::writeSnapshot(std::ostream& out) const {
     out << std::setprecision(17) << "{\"seed\":" << seed_ << ",\"reproduceCost\":" << reproduceCost_
+        << ",\"rejectedAliases\":" << rejectedAliases_
+        << ",\"previousCost\":" << previousCost_ << ",\"outcomeReward\":";
+    if (outcomeReward_) out << *outcomeReward_; else out << "null";
+    out
         << ",\"transitionCount\":" << transitionCount_ << ",\"predictionError\":";
     if (predictionError_) out << *predictionError_; else out << "null";
     out << ",\"firstTick\":";
@@ -423,12 +519,18 @@ void HdcBrain::writeSnapshot(std::ostream& out) const {
     for (std::size_t i = 0; i < clusters_.size(); ++i) {
         if (i) out << ',';
         const auto& c = clusters_[i];
-        out << "{\"samples\":" << c.samples << ",\"health\":" << c.health << ",\"energy\":" << c.energy << ",\"prototype\":[";
+        out << "{\"context\":[";
+        for (std::size_t k = 0; k < c.context.size(); ++k) { if (k) out << ','; out << c.context[k]; }
+        out << "],\"samples\":" << c.samples << ",\"health\":" << c.health << ",\"energy\":" << c.energy << ",\"prototype\":[";
         for (std::size_t d = 0; d < Dimensions; ++d) { if (d) out << ','; out << static_cast<int>(c.prototype[d]); }
         out << "],\"sums\":[";
         for (std::size_t d = 0; d < Dimensions; ++d) { if (d) out << ','; out << c.sums[d]; }
         out << "],\"quality\":[";
         for (std::size_t a = 0; a < ActionCount; ++a) { if (a) out << ','; out << c.quality[a]; }
+        out << "],\"values\":[";
+        for (std::size_t a = 0; a < ActionCount; ++a) { if (a) out << ','; out << c.values[a]; }
+        out << "],\"valueUpdates\":[";
+        for (std::size_t a = 0; a < ActionCount; ++a) { if (a) out << ','; out << c.valueUpdates[a]; }
         out << "],\"priorSamples\":[";
         for (std::size_t a = 0; a < ActionCount; ++a) { if (a) out << ','; out << c.priorSamples[a]; }
         out << "],\"transitions\":[";

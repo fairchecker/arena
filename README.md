@@ -79,7 +79,7 @@ Triangles indicate agent direction, green circles are food, brown squares are
 pushable crates, and yellow outlines mark renewable food sources. The optional
 visit overlay shows the selected agent's own map; brighter cells were entered more
 often. Three independent HDC agents explore a 36x24 arena with nine rooms and
-connecting passages. The GUI scenario begins with five food sources (one food
+connecting passages. The GUI scenario begins with nine food sources, one per room (one food
 each) and eight randomly placed food items, then has a 1/12 chance per tick to
 spawn one food item on a random empty tile. Each reset chooses a new random seed; use
 `python3 gui/server.py --seed 42` to reproduce the same run after reset.
@@ -90,6 +90,22 @@ The server listens only on
 are required. Set `ARENA_BUILD_GUI=OFF` to omit the GUI backend from the build.
 
 ## Long-running experiments
+
+Resource availability is configurable in both `gui/server.py` and
+`tools/run_experiment.py`: `--sources-per-room 1..4` places 9–36 permanent sources
+(default 9). `--no-random-food` disables both initial scattered food and subsequent
+random spawning; sources still replenish one food every 50 ticks. Combine it with
+`--no-reproduction` to test individual agents in a repeatable resource environment:
+
+```bash
+python3 tools/run_experiment.py --ticks 10000 --seed 42 --sources-per-room 2 --no-random-food --no-reproduction --output experiments/sources-42
+python3 gui/server.py --seed 42 --sources-per-room 2 --no-random-food --no-reproduction
+```
+
+These parameters are recorded in metadata. Source positions are fixed, not chosen
+by the seed. More food changes task difficulty; improved survival under this setting
+alone does not demonstrate learning or memory of sources. Results from the previous
+five-source scenario are not directly comparable to this new default.
 
 After building the GUI backend, run the same seeded scenario without a browser:
 
@@ -381,6 +397,144 @@ fresh per-agent memory, deterministic inheritance, non-reproducible brains), and
 survival-urgency food drive.
 
 ## Current limitations / next research steps
+
+### Learned motor policy (experimental alternative)
+
+`LearnedBrain` does not use GraphBrain's route gradients, shortest-path search,
+turn biases or distance rewards. It learns Q values for five motor outputs (wait,
+forward, left turn, right turn, eat) using actual tick outcomes and a bounded
+4096-transition replay buffer with eight replay updates per observed transition.
+Reward is `-0.02` per action, `+2` on hunger reduction, `-0.2` per lost health and
+`-5` at termination; learning rate is 0.2 and discount 0.98. Training uses 20%
+uniform exploration among feasible actions. The world action interface and physical
+action masks remain deliberately fixed; muscle control is not part of this world.
+
+Stable discrete state keys include position relative to the first resource remembered
+from observation, direction, energy, hunger threshold and local food/passability.
+The relative coordinates permit translation of the same layout, but not arbitrary
+rotation or changed geometry; different layouts can still alias. This is a tabular
+control experiment, **not** yet a learned spiking or
+vector graph, transferable motor skill, or a replacement for the other brains.
+GraphBrain remains the hand-designed navigation baseline.
+
+`learned_tests` trains 1500 episodes of a wall-detour task with four initial
+orientations, then freezes updates and exploration for evaluation. Across seeds
+1, 7 and 42 it reaches food in 13–16 ticks from all four orientations, with identical
+performance on a translated copy of the layout. In a separate 400-tick test on the
+same layout it stays alive and eats at least three times; the untrained frozen control
+does not eat and dies. This control fails partly because equal initial values choose
+wait, and is intentionally weak, not a comparison against a random or hand-designed
+navigator. The short training episodes end explicitly after eating and apply a terminal
+update without a fabricated death penalty. Evaluation asserts that
+the table size and update count remain unchanged. Large-arena survival and
+generalization are not established.
+
+```bash
+python3 gui/server.py --brain learned --seed 42 --no-random-food
+```
+
+Without `--skills` this starts **untrained** online agents. To train on the three
+small layouts and supply independent copies of those initial skills to GUI agents:
+
+```bash
+./build-release/skill_generalization --train-output my-skills
+python3 gui/server.py --brain learned --skills my-skills/skills.txt --seed 42 --no-random-food
+```
+
+The output directory must be new. The skill file is a versioned Q-value table, not
+a checkpoint: replay, RNG and episodic memory are not saved. Each GUI agent loads
+its own copy and continues learning independently. GUI reset reloads the original
+skill file and discards further online changes. `tools/run_experiment.py` also accepts
+`--skills` and stores the file's SHA-256 in metadata. No policy is automatically
+saved after a GUI run. Experiment snapshots include
+Q states, replay, RNG and resource context, but are not resumable checkpoints.
+LearnedBrain cannot reproduce, push crates or communicate. Its visit overlay is
+empty because this controller has no separate visit-count navigation heuristic.
+
+`skill_generalization` compares 3000 training episodes on one layout versus three
+single-wall layouts, using three independent training seeds. The frozen held-out test
+combines two walls and uses four initial directions. In this specific deterministic
+benchmark, multi-layout training succeeded 12/12, single-layout training 7/12, and
+the weak fresh baseline 0/12. This is a compositional variant of a very small map,
+not broad spatial generalization. In a 1000-tick no-reproduction GUI run with one
+source per room, both fresh and pretrained controllers died by tick 199 without a
+meal. Training does not yet produce an agent capable of surviving in the large world.
+
+### Graph-memory navigation baseline
+
+`GraphBrain` is a separate alternative, not a replacement for HDC:
+
+```bash
+python3 gui/server.py --brain graph --seed 42 --no-random-food
+python3 tools/run_experiment.py --brain graph --ticks 3000 --seed 42 --no-random-food --output experiments/graph-42
+```
+
+It stores only observed terrain, resources and visit counts. Traversable adjacent
+places form implicit spatial edges; resource flags identify goal nodes. A feeding
+signal responds quickly to hunger/injury and decays slowly; separate entry/exit
+thresholds provide hysteresis between feeding and exploration. Resource or unvisited
+place activation propagates synchronously with max-product attenuation (0.85 per
+edge), bounded by 256 rounds. Cycles cannot amplify activation. Immediate occupancy
+blocks paths; unknown terrain is not treated as known traversable space. This is a
+hand-designed navigation/homeostatic policy with acquired map memory, **not** a
+spiking network, learned skill graph, or demonstration of general reinforcement
+learning. It cannot reproduce, push crates or communicate. Unseen changes/food
+consumption can make memory stale, and depleted-source waiting is simplistic.
+
+`graph_tests` compares remembered-source navigation against erased-resource and
+disabled-modulation controls after a guided familiarization walk: 6 ticks to eat
+versus 13 for either control. In the fixed no-random-food GUI scenario all three
+agents survived 3000 ticks at 1, 2 and 4 sources per room; these are deterministic
+cases, not independent random-seed trials. The interface and experiment exports
+include graph diagnostics, map visits, node activation and regulator state. Snapshot
+fields differ from HDC snapshots and remain diagnostic, not resumable checkpoints.
+
+### Experimental TD decision layer
+
+Before comparing HDC distances, cluster assignment now requires the same critical
+context: hunger/health/energy buckets, facing, food on the current tile, condition of
+the forward tile (including occupancy), and whether movement energy is nonzero.
+This prevents similar hypervectors from mixing these incompatible situations.
+`rejectedAliases` counts candidate comparisons rejected despite Hamming distance
+at most 0.20 (not unique states or unique collisions). Context is included in the
+snapshot and copied to offspring. Buckets still merge nearby physical values, and
+other environmental features may still alias; this is not an exact state model.
+
+A reproducible small learning benchmark runs without reproduction:
+
+```bash
+./build-release/learning_benchmark
+```
+
+It compares the same brain after 100 episodes against a fresh brain and a
+memory-reset control for three encoding seeds, on a straight corridor and a wall
+detour. Temporal state and visit counts reset between episodes, while learned
+clusters and values remain. Evaluation is one online-learning episode per case;
+it is not a frozen-policy or statistically comprehensive evaluation. A result of
+201 means the agent did not eat within 200 ticks. The corridor takes five ticks
+for all variants. In the wall detour, seed 42 currently improves from 68 to 50
+ticks after training, while seeds 1 and 7 stay at 68. CTest protects that narrow
+learning regression, not a general survival claim. After the context guard change,
+five GUI seeds without reproduction still leave only 0–1 agents alive at tick 1000.
+
+HDC clusters now carry per-action values and update counts. After each full tick the
+arena reports physical state and termination to the brain, including starvation and
+combat deaths. The learned reward is `C(before) - C(after) - 0.02`, with an additional
+`-5` at death; `C = 2*hunger^4 + 0.15*(1-energy)^2 + 2*(1-health)^2` on normalized
+quantities. TD updates use learning rate 0.2 and discount 0.98, bootstrapping only
+from feasible actions. Values are inherited and exported in snapshots. The policy
+combines these values with food guidance, diminishing curiosity and action biases;
+it is not pure reinforcement learning. `actionSafety()` remains a legacy safety
+diagnostic; `actionValues()` exposes the actual learned returns.
+
+This is an experimental change, **not a demonstrated survival improvement**. In a
+five-seed check on the GUI arena without reproduction, only 0–1 of the original
+three agents survived 1000 ticks. Cluster aliasing, sparse rewards and the lack of
+spatial resource/route memory remain unresolved. Reproduce that diagnostic using
+`tools/run_experiment.py --ticks 1000 --seed 42 --no-reproduction --output PATH`.
+Unit tests establish reward updates, terminal feedback and changes in decisions, not
+long-run learning effectiveness. Earlier descriptions of the old action scoring
+above are historical; the TD policy supersedes its small empirical-safety term.
 
 This is a usable simulation foundation, not yet a rich artificial-life environment. It has
 cardinal movement, static walls, pushable crates, renewable food, facing-based melee, Manhattan visibility, and one

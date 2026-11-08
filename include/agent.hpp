@@ -83,6 +83,8 @@ class AgentBrain {
 public:
     virtual ~AgentBrain() = default;
     virtual Action decide(const Observation& observation) = 0;
+    // Called after the full tick, including hunger/combat, even if the agent died.
+    virtual void outcome(const AgentView&, bool) noexcept {}
 
     // Asexual reproduction hook. Returns a freshly constructed child brain seeded
     // with a distilled, bounded subset of this brain's learned experience, or

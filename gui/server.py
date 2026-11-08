@@ -18,12 +18,27 @@ def main():
                         ('arena_gui_backend.exe' if sys.platform == 'win32' else 'arena_gui_backend'))
     parser.add_argument('--no-browser', action='store_true')
     parser.add_argument('--seed', type=int, help='Fixed food seed for reproducible runs (0..4294967295)')
+    parser.add_argument('--sources-per-room', type=int, choices=range(1, 5), default=1)
+    parser.add_argument('--no-random-food', action='store_true')
+    parser.add_argument('--no-reproduction', action='store_true')
+    parser.add_argument('--brain', choices=('hdc', 'graph', 'learned'), default='hdc')
+    parser.add_argument('--skills', type=Path, help='LearnedBrain skill file')
     args = parser.parse_args()
     if args.seed is not None and not 0 <= args.seed <= 0xffffffff:
         parser.error('--seed must be between 0 and 4294967295')
+    if args.skills and args.brain != 'learned':
+        parser.error('--skills requires --brain learned')
     backend_command = [str(args.binary.resolve())]
     if args.seed is not None:
         backend_command += ['--seed', str(args.seed)]
+    backend_command += ['--sources-per-room', str(args.sources_per_room)]
+    backend_command += ['--brain', args.brain]
+    if args.skills:
+        backend_command += ['--skills', str(args.skills.resolve())]
+    if args.no_random_food:
+        backend_command.append('--no-random-food')
+    if args.no_reproduction:
+        backend_command.append('--no-reproduction')
     try:
         backend = subprocess.Popen(backend_command, stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, text=True, bufsize=1)

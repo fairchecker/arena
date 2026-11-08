@@ -4,7 +4,7 @@ import subprocess
 import sys
 import tempfile
 
-runner, binary = sys.argv[1:]
+runner, binary, trainer = sys.argv[1:]
 with tempfile.TemporaryDirectory() as temporary:
     root = pathlib.Path(temporary)
     def run(directory):
@@ -25,3 +25,43 @@ with tempfile.TemporaryDirectory() as temporary:
     assert len(cluster['prototype']) == len(cluster['sums']) == 256
     assert len(cluster['quality']) == len(cluster['transitions']) == 9
     assert 'message' in ticks[-1]['actions'][0]
+    for sources in (1, 4):
+        process = subprocess.run([binary, '--seed', '42', '--sources-per-room', str(sources),
+                                  '--no-random-food', '--no-reproduction'],
+                                 input='state\n' + 'step\n' * 60 + 'reset\n',
+                                 capture_output=True, text=True, check=True)
+        states = [json.loads(line) for line in process.stdout.splitlines()]
+        assert states[0] == states[-1]
+        assert sum(tile['source'] for tile in states[0]['tiles']) == sources * 9
+        assert sum(tile['food'] for tile in states[0]['tiles']) == sources * 9
+        assert all(tile['source'] or tile['food'] == 0 for state in states for tile in state['tiles'])
+        assert all(a['action'] != 'reproduce' for state in states for a in state['actions'])
+    graph_output = root / 'graph'
+    subprocess.run([sys.executable, runner, '--binary', binary, '--brain', 'graph',
+                    '--ticks', '100', '--seed', '42', '--no-random-food',
+                    '--snapshot-every', '50', '--output', str(graph_output)], check=True)
+    graph_ticks = [json.loads(line) for line in (graph_output / 'ticks.jsonl').read_text().splitlines()]
+    assert all(m['type'] == 'graph' for state in graph_ticks for m in state['models'])
+    graph_snapshots = [json.loads(line) for line in (graph_output / 'snapshots.jsonl').read_text().splitlines()]
+    assert graph_snapshots[-1]['models'][0]['brain']['places']
+    assert not json.loads((graph_output / 'metadata.json').read_text())['reproduction']
+    learned_output = root / 'learned'
+    subprocess.run([sys.executable, runner, '--binary', binary, '--brain', 'learned',
+                    '--ticks', '30', '--seed', '42', '--no-random-food',
+                    '--snapshot-every', '15', '--output', str(learned_output)], check=True)
+    learned_snapshots = [json.loads(line) for line in (learned_output / 'snapshots.jsonl').read_text().splitlines()]
+    model = learned_snapshots[-1]['models'][0]['brain']
+    assert model['type'] == 'learned' and model['states'] and model['replay']
+    assert len(model['states'][0]['values']) == 5
+    skill_dir = root / 'skills'
+    subprocess.run([trainer, '--train-output', str(skill_dir)], check=True)
+    assert subprocess.run([trainer, '--train-output', str(skill_dir)], capture_output=True).returncode != 0
+    skill_file = skill_dir / 'skills.txt'
+    output = root / 'pretrained'
+    subprocess.run([sys.executable, runner, '--binary', binary, '--brain', 'learned',
+                    '--skills', str(skill_file), '--ticks', '10', '--seed', '42',
+                    '--snapshot-every', '10', '--output', str(output)], check=True)
+    initial = json.loads((output / 'snapshots.jsonl').read_text().splitlines()[0])
+    assert len(initial['models']) == 3
+    assert all(m['brain']['states'] for m in initial['models'])
+    assert len(json.loads((output / 'metadata.json').read_text())['skillsSha256']) == 64

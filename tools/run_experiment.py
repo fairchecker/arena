@@ -20,6 +20,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--ticks', type=positive, required=True)
     parser.add_argument('--seed', type=int, required=True)
+    parser.add_argument('--no-reproduction', action='store_true')
+    parser.add_argument('--brain', choices=('hdc', 'graph', 'learned'), default='hdc')
+    parser.add_argument('--skills', type=pathlib.Path, help='LearnedBrain skill file')
+    parser.add_argument('--no-random-food', action='store_true')
+    parser.add_argument('--sources-per-room', type=int, choices=range(1, 5), default=1)
     parser.add_argument('--snapshot-every', type=positive, default=1000)
     parser.add_argument('--output', type=pathlib.Path, required=True,
                         help='new output directory (must not already exist)')
@@ -28,14 +33,29 @@ def main():
     args = parser.parse_args()
     if not 0 <= args.seed <= 0xffffffff:
         parser.error('seed must be between 0 and 4294967295')
+    if args.skills and args.brain != 'learned':
+        parser.error('--skills requires --brain learned')
+    skills = args.skills.resolve(strict=True) if args.skills else None
     binary = args.binary.resolve(strict=True)
     args.output.mkdir(parents=True, exist_ok=False)
     metadata = {'formatVersion': 1, 'seed': args.seed, 'requestedTicks': args.ticks,
-                'snapshotEvery': args.snapshot_every, 'scenario': 'gui',
+                'snapshotEvery': args.snapshot_every, 'scenario': 'gui', 'brain': args.brain,
+                'reproduction': args.brain == 'hdc' and not args.no_reproduction,
+                'sourcesPerRoom': args.sources_per_room, 'randomFood': not args.no_random_food,
+                'skillsSha256': hashlib.sha256(skills.read_bytes()).hexdigest() if skills else None,
                 'binary': str(binary), 'binarySha256': hashlib.sha256(binary.read_bytes()).hexdigest()}
     (args.output / 'metadata.json').write_text(json.dumps(metadata, indent=2) + '\n', encoding='utf-8')
     start = time.monotonic()
-    process = subprocess.Popen([str(binary), '--seed', str(args.seed)], stdin=subprocess.PIPE,
+    command_line = [str(binary), '--seed', str(args.seed)]
+    if args.no_reproduction:
+        command_line.append('--no-reproduction')
+    if args.no_random_food:
+        command_line.append('--no-random-food')
+    command_line += ['--sources-per-room', str(args.sources_per_room)]
+    command_line += ['--brain', args.brain]
+    if skills:
+        command_line += ['--skills', str(skills)]
+    process = subprocess.Popen(command_line, stdin=subprocess.PIPE,
                                stdout=subprocess.PIPE, text=True, encoding='utf-8')
 
     def command(name):

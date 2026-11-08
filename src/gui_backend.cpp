@@ -1,9 +1,12 @@
 #include "arena.hpp"
 #include "hdc_brain.hpp"
+#include "graph_brain.hpp"
+#include "learned_brain.hpp"
 
 #include <array>
 #include <iostream>
 #include <iomanip>
+#include <fstream>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -38,7 +41,7 @@ void spawnFood(Arena& arena, std::mt19937& random) {
     }
 }
 
-std::unique_ptr<Arena> createArena(std::mt19937& random) {
+std::unique_ptr<Arena> createArena(std::mt19937& random, bool reproduce, int sourcesPerRoom, bool randomFood, const std::string& brainType, const std::string& skillsPath) {
     auto arena = std::make_unique<Arena>(36, 24);
     // Enable autonomous asexual reproduction for the HDC population: agents may be
     // born up to the arena's population cap (default 8) and pay its cost (default 5).
@@ -55,7 +58,17 @@ std::unique_ptr<Arena> createArena(std::mt19937& random) {
         // HdcBrain(seed, reproduceCost): a positive reproduceCost enables autonomous
         // reproduction under safe conditions; the arena still enforces its own cost
         // and cap at resolution time.
-        auto brain = std::make_unique<HdcBrain>(1, 5);
+        std::unique_ptr<AgentBrain> brain;
+        if (brainType == "graph") brain = std::make_unique<GraphBrain>();
+        else if (brainType == "learned") {
+            auto learned = std::make_unique<LearnedBrain>(1);
+            if (!skillsPath.empty()) {
+                std::ifstream file(skillsPath);
+                if (!file || !learned->loadSkills(file)) throw std::runtime_error("Cannot load skill file: " + skillsPath);
+            }
+            brain = std::move(learned);
+        }
+        else brain = std::make_unique<HdcBrain>(1, reproduce ? 5 : 0);
         if (arena->addAgent(ArenaEntity(start, std::move(brain), Rotation::Right)) < 0)
             throw std::runtime_error("Could not place GUI agent");
     }
@@ -63,11 +76,15 @@ std::unique_ptr<Arena> createArena(std::mt19937& random) {
     for (const Position position : crates) {
         if (!arena->addCrate(position)) throw std::runtime_error("Could not place crate");
     }
-    const std::array<Position, 5> sources{{{5, 9}, {3, 19}, {13, 28}, {20, 4}, {21, 20}}};
-    for (const Position position : sources) {
-        if (!arena->addFoodSource(position) || !arena->addFood(position)) throw std::runtime_error("Could not place food source");
-    }
-    for (int i = 0; i < 8; ++i) spawnFood(*arena, random);
+    const std::array<Position, 4> offsets{{{5, 9}, {2, 8}, {6, 3}, {1, 6}}};
+    for (int roomRow = 0; roomRow < 3; ++roomRow)
+        for (int roomColumn = 0; roomColumn < 3; ++roomColumn)
+            for (int source = 0; source < sourcesPerRoom; ++source) {
+                const Position position = Position{roomRow * 8, roomColumn * 12} + offsets[static_cast<std::size_t>(source)];
+                if (!arena->addFoodSource(position) || !arena->addFood(position))
+                    throw std::runtime_error("Could not place food source");
+            }
+    if (randomFood) for (int i = 0; i < 8; ++i) spawnFood(*arena, random);
     return arena;
 }
 
@@ -121,6 +138,28 @@ void printState(const Arena& arena, const TickReport* report) {
     for (EntityId id : arena.getEntities().aliveIds()) {
         const auto* agent = arena.getAgent(id);
         const auto* brain = agent ? dynamic_cast<const HdcBrain*>(agent->getBrain()) : nullptr;
+        const auto* graphBrain = agent ? dynamic_cast<const GraphBrain*>(agent->getBrain()) : nullptr;
+        const auto* learnedBrain = agent ? dynamic_cast<const LearnedBrain*>(agent->getBrain()) : nullptr;
+        if (learnedBrain) {
+            if (!first) std::cout << ',';
+            first = false;
+            const auto d = learnedBrain->diagnostics();
+            std::cout << "{\"id\":" << id << ",\"type\":\"learned\",\"states\":" << d.states
+                << ",\"updates\":" << d.updates << ",\"learning\":" << (d.learning ? "true" : "false") << ",\"visits\":[]}";
+            continue;
+        }
+        if (graphBrain) {
+            if (!first) std::cout << ',';
+            first = false;
+            const auto d = graphBrain->diagnostics();
+            std::cout << "{\"id\":" << id << ",\"type\":\"graph\",\"places\":" << d.places
+                << ",\"sources\":" << d.sources << ",\"feedingSignal\":" << d.feedingSignal
+                << ",\"feedingMode\":" << (d.feedingMode ? "true" : "false")
+                << ",\"propagationRounds\":" << d.propagationRounds << ",\"visits\":";
+            graphBrain->writeVisits(std::cout);
+            std::cout << '}';
+            continue;
+        }
         if (!brain) continue;
         if (!first) std::cout << ',';
         first = false;
@@ -130,6 +169,7 @@ void printState(const Arena& arena, const TickReport* report) {
                   << ",\"informedClusters\":" << diagnostics.informedClusters
                   << ",\"maxPriorAdvantage\":" << diagnostics.maxPriorAdvantage
                   << ",\"memoryLowerBoundBytes\":" << diagnostics.memoryLowerBoundBytes
+                  << ",\"rejectedAliases\":" << diagnostics.rejectedAliases
                   << ",\"predictionError\":";
         if (diagnostics.predictionError) std::cout << *diagnostics.predictionError;
         else std::cout << "null";
@@ -166,11 +206,15 @@ void printSnapshot(const Arena& arena) {
     for (const EntityId id : arena.getEntities().allIds()) {
         const auto* agent = arena.getAgent(id);
         const auto* brain = agent ? dynamic_cast<const HdcBrain*>(agent->getBrain()) : nullptr;
-        if (!brain) continue;
+        const auto* graphBrain = agent ? dynamic_cast<const GraphBrain*>(agent->getBrain()) : nullptr;
+        const auto* learnedBrain = agent ? dynamic_cast<const LearnedBrain*>(agent->getBrain()) : nullptr;
+        if (!brain && !graphBrain && !learnedBrain) continue;
         if (!first) std::cout << ',';
         first = false;
         std::cout << "{\"id\":" << id << ",\"alive\":" << (agent->isAlive() ? "true" : "false") << ",\"brain\":";
-        brain->writeSnapshot(std::cout);
+        if (brain) brain->writeSnapshot(std::cout);
+        else if (graphBrain) graphBrain->writeSnapshot(std::cout);
+        else learnedBrain->writeSnapshot(std::cout);
         std::cout << '}';
     }
     std::cout << "]}" << std::endl;
@@ -179,35 +223,55 @@ void printSnapshot(const Arena& arena) {
 
 int main(int argc, char** argv) {
     std::optional<std::mt19937::result_type> fixedSeed;
-    if (argc != 1) {
-        if (argc != 3 || std::string(argv[1]) != "--seed") {
-            std::cerr << "Usage: arena_gui_backend [--seed 0..4294967295]\n";
-            return 1;
-        }
-        try {
-            const std::string value = argv[2];
+    bool reproduce = true, randomFood = true;
+    std::string brainType = "hdc";
+    std::string skillsPath;
+    int sourcesPerRoom = 1;
+    try {
+        for (int i = 1; i < argc; ++i) {
+            const std::string option = argv[i];
+            if (option == "--no-reproduction") { reproduce = false; continue; }
+            if (option == "--no-random-food") { randomFood = false; continue; }
+            if (option == "--skills" && i + 1 < argc) { skillsPath = argv[++i]; continue; }
+            if (option == "--brain" && i + 1 < argc) {
+                const std::string type = argv[++i];
+                if (type != "graph" && type != "hdc" && type != "learned") throw std::invalid_argument("brain");
+                brainType = type;
+                continue;
+            }
+            if ((option != "--seed" && option != "--sources-per-room") || i + 1 >= argc)
+                throw std::invalid_argument("option");
+            const std::string value = argv[++i];
             std::size_t end = 0;
-            const auto seed = std::stoull(value, &end);
+            const auto number = std::stoull(value, &end);
             if (value.empty() || value[0] == '-' || end != value.size() ||
-                seed > std::numeric_limits<std::uint32_t>::max()) throw std::out_of_range("seed");
-            fixedSeed = static_cast<std::mt19937::result_type>(seed);
-        } catch (const std::exception&) {
-            std::cerr << "Invalid seed\n";
-            return 1;
+                number > std::numeric_limits<std::uint32_t>::max()) throw std::out_of_range("value");
+            if (option == "--seed") fixedSeed = static_cast<std::mt19937::result_type>(number);
+            else {
+                if (number < 1 || number > 4) throw std::out_of_range("sources");
+                sourcesPerRoom = static_cast<int>(number);
+            }
         }
+        if (!skillsPath.empty() && brainType != "learned") throw std::invalid_argument("skills require learned brain");
+    } catch (const std::exception&) {
+        std::cerr << "Usage: arena_gui_backend [--brain hdc|graph|learned] [--skills FILE] [--seed 0..4294967295] [--sources-per-room 1..4] [--no-random-food] [--no-reproduction]\n";
+        return 1;
     }
     std::random_device entropy;
     std::mt19937 random(fixedSeed ? *fixedSeed : entropy());
-    auto arena = createArena(random);
+    std::unique_ptr<Arena> arena;
+    try { arena = createArena(random, reproduce, sourcesPerRoom, randomFood, brainType, skillsPath); }
+    catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
     std::string command;
     while (std::getline(std::cin, command)) {
         if (command == "step") {
             const auto report = arena->step();
-            if (random() % 12U == 0U) spawnFood(*arena, random);
+            if (randomFood && random() % 12U == 0U) spawnFood(*arena, random);
             printState(*arena, &report);
         } else if (command == "reset") {
             random.seed(fixedSeed ? *fixedSeed : entropy());
-            arena = createArena(random);
+            try { arena = createArena(random, reproduce, sourcesPerRoom, randomFood, brainType, skillsPath); }
+            catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
             printState(*arena, nullptr);
         } else if (command == "snapshot") {
             printSnapshot(*arena);

@@ -18,7 +18,7 @@
 </style>
 </head>
 <body><main>
-  <h1>Arena</h1><p>Исследователи HDC: комнаты, ящики и возобновляемые источники пищи.</p>
+  <h1>Arena</h1><p>Исследователи: комнаты, ящики и возобновляемые источники пищи.</p>
   <div class="controls">
     <button id="play">▶ Запустить</button><button id="step">Шаг</button><button id="reset">Сначала</button>
     <label>Скорость <select id="speed"><option value="1000">1 шаг/с</option><option value="500" selected>2 шага/с</option><option value="200">5 шагов/с</option><option value="100">10 шагов/с</option></select></label>
@@ -62,8 +62,8 @@ function draw(data) {
     ctx.fillStyle = ['#60a5fa', '#fb923c', '#c084fc'][a.id] || '#fff'; ctx.beginPath(); ctx.moveTo(0,-h*.4); ctx.lineTo(w*.38,h*.36); ctx.lineTo(-w*.38,h*.36); ctx.closePath(); ctx.fill(); ctx.restore();
     ctx.fillStyle = 'white'; ctx.font = 'bold 9px sans-serif'; ctx.fillText(a.id, x-3, y+3);
   });
-  document.querySelector('#agents').innerHTML = data.agents.map(a => `<div class="agent"><strong>${['🔵', '🟠', '🟣'][a.id] || '⚪'} HDC #${a.id}</strong><br>Здоровье: ${a.health}/${a.maxHealth}<br>Энергия: ${a.energy}/${a.maxEnergy}<br>Голод: ${a.hunger}/${a.maxHunger}<br>Клетка: ${a.row}, ${a.column}</div>`).join('') || 'Нет живых агентов';
-  document.querySelector('#model').innerHTML = data.models.map(m => `<div class="agent"><strong>#${m.id}</strong> · мест: ${m.visited}<br>Кластеры: ${m.clusters} · переходы: ${m.transitions}<br>Ошибка: ${m.predictionError === null ? 'нет прогноза' : (m.predictionError * 100).toFixed(1) + '%'}</div>`).join('');
+  document.querySelector('#agents').innerHTML = data.agents.map(a => `<div class="agent"><strong>${['🔵', '🟠', '🟣'][a.id] || '⚪'} ${data.models.find(m => m.id === a.id)?.type || 'HDC'} #${a.id}</strong><br>Здоровье: ${a.health}/${a.maxHealth}<br>Энергия: ${a.energy}/${a.maxEnergy}<br>Голод: ${a.hunger}/${a.maxHunger}<br>Клетка: ${a.row}, ${a.column}</div>`).join('') || 'Нет живых агентов';
+  document.querySelector('#model').innerHTML = data.models.map(m => m.type === 'learned' ? `<div class="agent"><strong>Learned #${m.id}</strong><br>Состояния: ${m.states} · обновления: ${m.updates}<br>${m.learning ? 'Обучение' : 'Оценка'}</div>` : m.type === 'graph' ? `<div class="agent"><strong>Graph #${m.id}</strong> · мест: ${m.places}<br>Источники: ${m.sources}<br>Пищевой сигнал: ${m.feedingSignal.toFixed(2)} · ${m.feedingMode ? 'питание' : 'исследование'}<br>Раунды активации: ${m.propagationRounds}</div>` : `<div class="agent"><strong>#${m.id}</strong> · мест: ${m.visited}<br>Кластеры: ${m.clusters} · переходы: ${m.transitions}<br>Ошибка: ${m.predictionError === null ? 'нет прогноза' : (m.predictionError * 100).toFixed(1) + '%'}</div>`).join('');
   document.querySelector('#actions').textContent = data.actions.map(a => `#${a.id}: ${a.action} — ${a.success ? 'успех' : 'неудача'}`).join('\n') || 'Пока нет действий';
   document.querySelector('#actions').style.whiteSpace = 'pre-line';
   if (!data.alive) pause();

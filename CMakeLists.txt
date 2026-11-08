@@ -24,6 +24,8 @@ add_library(arena_core
     src/entity.cpp
     src/entity_registry.cpp
     src/hdc_brain.cpp
+    src/graph_brain.cpp
+    src/learned_brain.cpp
     src/world.cpp
 )
 target_include_directories(arena_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -68,6 +70,22 @@ if(ARENA_BUILD_TESTS)
     target_link_libraries(hdc_tests PRIVATE arena_core)
     arena_apply_compile_options(hdc_tests)
     add_test(NAME hdc_tests COMMAND hdc_tests)
+    add_executable(graph_tests tests/graph_tests.cpp)
+    target_link_libraries(graph_tests PRIVATE arena_core)
+    arena_apply_compile_options(graph_tests)
+    add_test(NAME graph_tests COMMAND graph_tests)
+    add_executable(learned_tests tests/learned_tests.cpp)
+    target_link_libraries(learned_tests PRIVATE arena_core)
+    arena_apply_compile_options(learned_tests)
+    add_test(NAME learned_tests COMMAND learned_tests)
+    add_executable(skill_generalization tests/skill_generalization.cpp)
+    target_link_libraries(skill_generalization PRIVATE arena_core)
+    arena_apply_compile_options(skill_generalization)
+    add_test(NAME skill_generalization COMMAND skill_generalization)
+    add_executable(learning_benchmark tests/learning_benchmark.cpp)
+    target_link_libraries(learning_benchmark PRIVATE arena_core)
+    arena_apply_compile_options(learning_benchmark)
+    add_test(NAME arena_learning_benchmark COMMAND learning_benchmark)
     if(ARENA_BUILD_GUI)
         find_package(Python3 COMPONENTS Interpreter QUIET)
         if(Python3_Interpreter_FOUND)
@@ -76,7 +94,8 @@ if(ARENA_BUILD_TESTS)
                         $<TARGET_FILE:arena_gui_backend> ${CMAKE_CURRENT_SOURCE_DIR}/gui/server.py)
             add_test(NAME arena_experiment_smoke
                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/experiment_smoke.py
-                        ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_experiment.py $<TARGET_FILE:arena_gui_backend>)
+                        ${CMAKE_CURRENT_SOURCE_DIR}/tools/run_experiment.py $<TARGET_FILE:arena_gui_backend>
+                        $<TARGET_FILE:skill_generalization>)
         endif()
     endif()
 endif()

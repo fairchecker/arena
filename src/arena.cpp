@@ -218,6 +218,14 @@ TickReport Arena::step() {
         entities_.getEntity(id)->advanceHunger();
     }
     entities_.checkHealth();
+    for (const EntityId id : ids) {
+        auto* entity = entities_.getEntity(id);
+        if (!entity || !entity->getBrain()) continue;
+        AgentView state{entity->getPosition(), entity->getDirection(), entity->getHealth(),
+            entity->getMaxHealth(), entity->getEnergy(), entity->getMaxEnergy(), entity->getDamage(),
+            entity->getVisionRange(), entity->getInspectRange(), entity->getHunger(), ArenaEntity::MaxHunger};
+        entity->getBrain()->outcome(state, !entity->isAlive());
+    }
     ++tick_;
     if (tick_ % 50U == 0U) world_.refillFoodSources();
     report.aliveAgents = entities_.aliveCount();

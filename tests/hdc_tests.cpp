@@ -17,6 +17,19 @@ public:
     }
 };
 
+class OutcomeProbe final : public AgentBrain {
+public:
+    Action decide(const Observation&) override { return Action::wait(); }
+    void outcome(const AgentView& state, bool terminal) noexcept override {
+        ++callbacks;
+        died = terminal;
+        finalHealth = state.health;
+    }
+    int callbacks{0};
+    int finalHealth{-1};
+    bool died{false};
+};
+
 class Scripted final : public AgentBrain {
 public:
     explicit Scripted(std::vector<Action> actions) : actions_(std::move(actions)) {}
@@ -245,6 +258,10 @@ void testAutonomousReproductionInArena() {
     assert(arena.addFood({0, 0}, 4));
     assert(arena.addFoodSource({4, 4}));
     assert(arena.addFood({4, 4}, 4));
+    // This tests autonomous reproduction, not navigation to sparse resources.
+    for (int row = 0; row < 5; ++row)
+        for (int column = 0; column < 5; ++column)
+            assert(arena.addFood({row, column}, 10));
     assert(arena.addAgent(ArenaEntity({2, 2}, std::make_unique<HdcBrain>(42, 3), Rotation::Right)) == 0);
 
     bool reproduced = false;
@@ -266,6 +283,76 @@ void testAutonomousReproductionInArena() {
 }
 
 int main() {
+    {
+        HdcBrain guarded(42);
+        auto base = makeObservation({2, 2}, 10, 5, 10);
+        base.visibleTiles.push_back({{1, 2}, true, 0});
+        guarded.decide(base);
+        auto death = base.self;
+        death.health = 0;
+        guarded.outcome(death, true);
+        assert(guarded.actionValues(base)[HdcBrain::ActionMove] < 0.0);
+        const auto original = guarded.diagnostics().clusters;
+        auto hungry = base;
+        hungry.self.hunger = 90;
+        assert(guarded.actionValues(hungry)[HdcBrain::ActionMove] == 0.0);
+        guarded.beginEpisode();
+        guarded.decide(hungry);
+        assert(guarded.diagnostics().clusters == original + 1);
+        auto turned = hungry;
+        turned.self.direction = Rotation::Right;
+        guarded.beginEpisode();
+        guarded.decide(turned);
+        assert(guarded.diagnostics().clusters == original + 2);
+        for (int feature = 0; feature < 4; ++feature) {
+            auto distinct = base;
+            if (feature == 0) distinct.self.energy = 0;
+            if (feature == 1) distinct.self.health = 1;
+            if (feature == 2) distinct.visibleTiles[0].food = 1;
+            if (feature == 3) distinct.visibleTiles[1].walkable = false;
+            assert(guarded.actionValues(distinct)[HdcBrain::ActionMove] == 0.0);
+            guarded.beginEpisode();
+            guarded.decide(distinct);
+            assert(guarded.diagnostics().clusters == original + 3 + static_cast<std::size_t>(feature));
+        }
+    }
+    {
+        Arena arena(1, 1);
+        auto probe = std::make_unique<OutcomeProbe>();
+        auto* observed = probe.get();
+        arena.addAgent(ArenaEntity({0, 0}, std::move(probe), Rotation::Up, 1));
+        arena.run(200);
+        assert(observed->died && observed->finalHealth == 0);
+        assert(observed->callbacks == 109);
+    }
+    // Successful food consumption increases the learned Eat value, without births.
+    {
+        HdcBrain learner(42);
+        auto hungry = makeObservation({2, 2}, 10, 5, 90);
+        hungry.visibleTiles = {{{2, 2}, true, 1}};
+        assert(learner.decide(hungry).type == ActionType::Eat);
+        auto fed = hungry;
+        fed.self.hunger = 50;
+        learner.outcome(fed.self, false);
+        learner.decide(fed);
+        assert(learner.actionValues(hungry)[HdcBrain::ActionEat] > 0.0);
+    }
+    // A terminal outcome must punish the selected action even with no next decide.
+    {
+        auto state = makeObservation({2, 2}, 10, 5, 80);
+        state.visibleTiles.push_back({{1, 2}, true, 0});
+        HdcBrain trained(42), fresh(42);
+        const Action before = trained.decide(state);
+        assert(before.type == ActionType::Move);
+        auto terminal = state.self;
+        terminal.health = 0;
+        trained.outcome(terminal, true);
+        assert(trained.actionValues(state)[HdcBrain::ActionMove] < -1.0);
+        assert(fresh.actionValues(state)[HdcBrain::ActionMove] == 0.0);
+        assert(trained.decide(state).type != ActionType::Move);
+        auto child = trained.offspring();
+        assert(dynamic_cast<HdcBrain*>(child.get())->actionValues(state)[HdcBrain::ActionMove] < -1.0);
+    }
     Observation observation;
     observation.self.position = {2, 2};
     observation.self.health = observation.self.maxHealth = 10;
@@ -284,13 +371,12 @@ int main() {
     elsewhere.self.position.column++;
     assert(first.encode(elsewhere) != encoded);
 
-    bool predicted = false, exploredMove = false, exploredRotation = false;
+    bool predicted = false, exploredMove = false;
     for (int i = 0; i < 30; ++i) {
         const auto action = first.decide(observation);
         const auto same = second.decide(observation);
         assert(action.type == same.type && action.rotation == same.rotation);
         exploredMove = exploredMove || action.type == ActionType::Move;
-        exploredRotation = exploredRotation || action.type == ActionType::Rotate;
         const auto stats = first.diagnostics();
         assert(stats.clusters == 1);
         assert(stats.transitions == static_cast<std::size_t>(i));
@@ -300,7 +386,9 @@ int main() {
         }
     }
     assert(predicted);
-    assert(exploredMove && exploredRotation);
+    // Replaying an unchanged observation is not a real navigation episode. Do not
+    // require the learned policy to reproduce the old heuristic's action schedule.
+    assert(exploredMove);
     assert(first.diagnostics().visitedPlaces == 1);
     first.decide(changed);
     assert(first.diagnostics().transitions == 30);

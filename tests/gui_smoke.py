@@ -28,9 +28,9 @@ try:
     assert len(initial['models']) == 3 and all(model['clusters'] == 0 for model in initial['models'])
     assert initial['agents'][0]['hunger'] == 0
     assert len(initial['tiles']) == initial['width'] * initial['height']
-    assert sum(tile['food'] for tile in initial['tiles']) == 13
+    assert sum(tile['food'] for tile in initial['tiles']) == 17
     assert sum(tile['crate'] for tile in initial['tiles']) == 6
-    assert sum(tile['source'] for tile in initial['tiles']) == 5
+    assert sum(tile['source'] for tile in initial['tiles']) == 9
     # The rooms must be connected without moving a crate.
     width, height = initial['width'], initial['height']
     start = (initial['agents'][0]['row'], initial['agents'][0]['column'])
